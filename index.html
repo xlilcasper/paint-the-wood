@@ -51,6 +51,11 @@
   .group { display: flex; align-items: center; gap: 8px; }
   #opacity-val { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 36px; }
   label { font-size: 13px; }
+  label.check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
   input[type="range"] { width: 120px; accent-color: #e0a15a; }
   .coverage { width: 240px; }
   .row {
@@ -447,6 +452,7 @@
     <input id="opacity" type="range" min="12" max="100" value="60" title="How solid the paint can get. Go over a spot to build toward this.">
     <span id="opacity-val">60%</span>
   </div>
+  <label class="check" for="show-coat"><input id="show-coat" type="checkbox"> Show coat</label>
   <div class="coverage">
     <div class="row"><span>Coverage</span><span id="pct">0.0%</span></div>
     <div class="track-wrap">
@@ -491,10 +497,13 @@
   const BROWN = [122, 74, 42];
   const TOOLS = [
     { id: "brush", name: "Brush", cost: 0, blurb: "The everyday brush." },
-    { id: "remover", name: "Remover", cost: 20, blurb: "Lifts paint. Scorch stays." },
+    { id: "remover", name: "Remover", cost: 20, blurb: "Lifts paint and gloss. Scorch and char stay." },
     { id: "marker", name: "Marker", cost: 30, blurb: "Thin, and always solid. The opacity slider does not change it." },
     { id: "airbrush", name: "Airbrush", cost: 50, blurb: "A wide, soft coat. Good for stain." },
-    { id: "burner", name: "Burner", cost: 80, blurb: "Scorches the wood. The remover cannot lift it." }
+    { id: "gloss", name: "Gloss", cost: 35, blurb: "A clear coat. Turn on Show coat to see where it is. Matte orders want none." },
+    { id: "brand", name: "Brand", cost: 25, blurb: "Stamps the shop mark. A branded board sells for more." },
+    { id: "torch", name: "Torch", cost: 55, blurb: "Chars the wood into a burned finish. Paint covers the char." },
+    { id: "burner", name: "Burner", cost: 80, blurb: "Freehand scorch for drawing a line. The remover cannot lift it." }
   ];
   const ORDER_COLORS = [
     { name: "barn red", r: 148, g: 48, b: 36 },
@@ -838,7 +847,11 @@
   let maxBrush = 21;
   let brownOwned = false;
   let tool = "brush";
-  let ownedTools = { brush: true, remover: false, marker: false, airbrush: false, burner: false };
+  let ownedTools = { brush: true, remover: false, marker: false, airbrush: false, gloss: false, brand: false, torch: false, burner: false };
+  let showCoat = false;
+  let glossLevel = 0;
+  let charLevel = 0;
+  let branded = false;
   let order = null;
   let contract = null;
   let onContract = false;
@@ -871,7 +884,7 @@
     maxBrush = 21;
     brownOwned = false;
     tool = "brush";
-    ownedTools = { brush: true, remover: false, marker: false, airbrush: false, burner: false };
+    ownedTools = { brush: true, remover: false, marker: false, airbrush: false, gloss: false, brand: false, torch: false, burner: false };
     contract = null;
     onContract = false;
     mixPick = null;
@@ -963,15 +976,23 @@
     } catch (err) { /* private mode */ }
   }
 
+  function sheenLine(finish) {
+    return finish === "gloss"
+      ? " Finish it with a clear gloss coat."
+      : " Leave the coat matte.";
+  }
+
   function rollOrder(spec) {
     const kindRoll = Math.random();
     const kind = kindRoll < 0.4 ? "solid" : kindRoll < 0.7 ? "stain" : "two-tone";
     const color = ORDER_COLORS[Math.floor(Math.random() * ORDER_COLORS.length)];
     const piece = spec.name.toLowerCase();
+    const finish = Math.random() < 0.5 ? "gloss" : "matte";
+    const sheen = sheenLine(finish);
     if (kind === "stain") {
       return {
-        kind, color,
-        text: "Stain the " + piece + " " + color.name + " and leave the grain showing. Keep the coat light."
+        kind, color, finish,
+        text: "Stain the " + piece + " " + color.name + " and leave the grain showing. Keep the coat light." + sheen
       };
     }
     if (kind === "two-tone") {
@@ -982,13 +1003,13 @@
         b: Math.round(color.b * 0.42)
       };
       return {
-        kind, color, end,
-        text: "Paint the faces " + color.name + " and the cut ends darker."
+        kind, color, end, finish,
+        text: "Paint the faces " + color.name + " and the cut ends darker." + sheen
       };
     }
     return {
-      kind: "solid", color,
-      text: "Paint the " + piece + " " + color.name + ". Make the coat solid."
+      kind: "solid", color, finish,
+      text: "Paint the " + piece + " " + color.name + ". Make the coat solid." + sheen
     };
   }
 
@@ -1002,6 +1023,12 @@
   function sellCash(spec) {
     if (spec && spec.scrap) return SCRAP_PAY;
     return piecePrice(spec);
+  }
+
+  function salePrice(spec) {
+    const base = sellCash(spec);
+    const fancy = glossLevel * 0.35 + charLevel * 0.4 + (branded ? 0.2 : 0);
+    return base + Math.round(base * fancy);
   }
 
   function completePay(spec) {
@@ -1026,16 +1053,35 @@
   function compositeFace(face) {
     face.paintCtx.putImageData(face.image, 0, 0);
     face.burnCtx.putImageData(face.burnImage, 0, 0);
+    if (face.charDirty) {
+      face.charCtx.putImageData(face.charImage, 0, 0);
+      face.charDirty = false;
+    }
     face.ctx.globalAlpha = 1;
     face.ctx.drawImage(face.wood, 0, 0);
+    face.ctx.drawImage(face.charCanvas, 0, 0);
     face.ctx.drawImage(face.paint, 0, 0);
     face.ctx.drawImage(face.burnCanvas, 0, 0);
+    if (showCoat) {
+      if (face.glossDirty) {
+        face.glossCtx.putImageData(face.glossImage, 0, 0);
+        face.glossDirty = false;
+      }
+      face.ctx.drawImage(face.glossCanvas, 0, 0);
+    }
     face.texture.needsUpdate = true;
   }
 
   function redrawFace(face) {
     face.pixels.fill(0);
     face.burn.fill(0);
+    face.char.fill(0);
+    face.gloss.fill(0);
+    face.charImage.data.fill(0);
+    face.glossImage.data.fill(0);
+    face.charDirty = true;
+    face.glossDirty = true;
+    face.brandCount = 0;
     face.mask.fill(0);
     compositeFace(face);
   }
@@ -1102,16 +1148,33 @@
     const burnCanvas = document.createElement("canvas");
     burnCanvas.width = w;
     burnCanvas.height = h;
+    const char = new Uint8Array(w * h);
+    const charPixels = new Uint8ClampedArray(w * h * 4);
+    const charCanvas = document.createElement("canvas");
+    charCanvas.width = w;
+    charCanvas.height = h;
+    const gloss = new Uint8Array(w * h);
+    const glossPixels = new Uint8ClampedArray(w * h * 4);
+    const glossCanvas = document.createElement("canvas");
+    glossCanvas.width = w;
+    glossCanvas.height = h;
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.anisotropy = maxAniso;
     return {
-      w, h, wood, paint, burn, burnCanvas,
+      w, h, wood, paint, burn, burnCanvas, char, charCanvas, gloss, glossCanvas,
       paintCtx: paint.getContext("2d"),
       burnCtx: burnCanvas.getContext("2d"),
+      charCtx: charCanvas.getContext("2d"),
+      glossCtx: glossCanvas.getContext("2d"),
       pixels,
       image: new ImageData(pixels, w, h),
       burnImage: new ImageData(burn, w, h),
+      charImage: new ImageData(charPixels, w, h),
+      glossImage: new ImageData(glossPixels, w, h),
+      charDirty: false,
+      glossDirty: false,
+      brandCount: 0,
       ctx, texture,
       mask: new Uint8Array(w * h)
     };
@@ -1127,10 +1190,13 @@
   }
 
   function updatePieceUi() {
-    const cash = sellCash(currentSpec);
+    const cash = salePrice(currentSpec);
+    const woodPay = sellCash(currentSpec);
     const tag = sales === 0 ? "" : currentSpec.scrap ? " · scrap" : onContract ? " · contract" : " · yard";
     document.getElementById("piece").textContent = currentSpec.name + tag;
-    document.getElementById("sell").textContent = "Sell for $" + cash;
+    const sellBtn = document.getElementById("sell");
+    sellBtn.textContent = "Sell for $" + cash;
+    sellBtn.title = cash > woodPay ? "The wood is $" + woodPay + ". The finish adds $" + (cash - woodPay) + "." : "Sells for the wood price.";
     document.getElementById("sell-banner").textContent = "Sell for $" + cash;
     const completeBtn = document.getElementById("complete-banner");
     const title = document.getElementById("banner-title");
@@ -1174,7 +1240,10 @@
     const opacity = order.kind === "stain"
       ? "Set opacity to about 40% before you paint, so the grain still shows."
       : "Set opacity to 60% or more, and paint until the color stops changing.";
-    return between + stir + opacity;
+    const sheen = order.finish === "gloss"
+      ? " Brush on gloss, and turn on Show coat to check for gaps."
+      : " Leave it matte. Gloss will spoil this order.";
+    return between + stir + opacity + sheen;
   }
 
   function syncMixPick() {
@@ -1520,7 +1589,9 @@
     const color = blendColor();
     const ready = !toolNeedsPaint() || brushReady();
     if (tool === "remover") paintColor.set("#d5cfc4");
-    else if (tool === "burner") paintColor.set("#4a2c1c");
+    else if (tool === "burner" || tool === "brand") paintColor.set("#4a2c1c");
+    else if (tool === "torch") paintColor.set("#2a1812");
+    else if (tool === "gloss") paintColor.set("#d5e6f4");
     else if (color) {
       const hex = toHex(color);
       paintColor.set(hex);
@@ -2020,6 +2091,8 @@
     if (tool === "marker") return Math.max(8, Math.round(base * 0.42));
     if (tool === "airbrush") return Math.round(base * 1.65);
     if (tool === "burner") return Math.max(10, Math.round(base * 0.7));
+    if (tool === "torch") return Math.round(base * 1.45);
+    if (tool === "brand") return 28;
     return base;
   }
 
@@ -2041,7 +2114,7 @@
           if (!face.mask[i]) continue;
           const paintA = face.pixels[i * 4 + 3];
           const burnA = face.burn[i * 4 + 3];
-          const source = paintA >= burnA ? face.pixels : face.burn;
+          const source = paintA >= 40 || paintA >= burnA ? face.pixels : face.burn;
           const alpha = Math.max(paintA, burnA);
           if (alpha < 8) continue;
           let sample = colorScore(source[i * 4], source[i * 4 + 1], source[i * 4 + 2], target);
@@ -2051,6 +2124,11 @@
           } else {
             sample *= 0.55 + 0.45 * Math.min(1, alpha / 140);
           }
+          const glossA = face.gloss[i] || 0;
+          const coat = order.finish === "gloss"
+            ? Math.min(1, glossA / 150)
+            : 1 - Math.min(1, glossA / 120);
+          sample *= coat;
           score += sample;
           count++;
         }
@@ -2101,12 +2179,20 @@
   updateCursorSize();
   opacityInput.addEventListener("input", syncOpacityControl);
   syncOpacityControl();
+  document.getElementById("show-coat").addEventListener("change", (event) => {
+    showCoat = event.target.checked;
+    faces.forEach((face) => {
+      face.glossDirty = true;
+      compositeFace(face);
+    });
+  });
 
   function updateCoverage() {
     const ratio = painted / TOTAL;
     const pct = Math.min(100, ratio * 100);
     pctEl.textContent = pct.toFixed(1) + "%";
     fillEl.style.width = pct + "%";
+    surveyFinish();
     matchScore = measureMatch();
     const covered = ratio >= GOAL;
     won = covered;
@@ -2118,8 +2204,8 @@
       statusEl.textContent = onContract
         ? (canComplete()
           ? "Ready to turn in for $" + completePay(currentSpec) + "."
-          : "Covered. Match is " + Math.round(matchScore * 100) + "%. Sell for $" + sellCash(currentSpec) + ", or bring the color closer.")
-        : "Ready to sell for $" + sellCash(currentSpec) + ".";
+          : "Covered. Match is " + Math.round(matchScore * 100) + "%. Sell for $" + salePrice(currentSpec) + ", or bring the color closer.")
+        : "Ready to sell for $" + salePrice(currentSpec) + ".";
     }
   }
 
@@ -2146,10 +2232,83 @@
 
   function uncoverPixel(face, i) {
     if (face.mask[i] === 0) return;
-    if (face.pixels[i * 4 + 3] < 8 && face.burn[i * 4 + 3] < 8) {
+    if (face.pixels[i * 4 + 3] < 8 && face.burn[i * 4 + 3] < 8 && face.char[i] < 8) {
       face.mask[i] = 0;
       painted--;
     }
+  }
+
+  function writeChar(face, i, alpha) {
+    face.char[i] = alpha;
+    const o = i * 4;
+    const data = face.charImage.data;
+    data[o] = 36;
+    data[o + 1] = 24;
+    data[o + 2] = 18;
+    data[o + 3] = alpha;
+    face.charDirty = true;
+  }
+
+  function writeGloss(face, i, alpha) {
+    face.gloss[i] = alpha;
+    const o = i * 4;
+    const data = face.glossImage.data;
+    data[o] = 214;
+    data[o + 1] = 228;
+    data[o + 2] = 242;
+    data[o + 3] = Math.round(alpha * 0.72);
+    face.glossDirty = true;
+  }
+
+  function stampBrand(face, cx, cy) {
+    const radius = 28;
+    const x0 = Math.max(0, Math.floor(cx - radius));
+    const x1 = Math.min(face.w - 1, Math.ceil(cx + radius));
+    const y0 = Math.max(0, Math.floor(cy - radius));
+    const y1 = Math.min(face.h - 1, Math.ceil(cy + radius));
+    let marked = false;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const dx = x + 0.5 - cx;
+        const dy = y + 0.5 - cy;
+        const dist = Math.hypot(dx, dy);
+        const ring = dist > radius * 0.72 && dist < radius * 0.94;
+        const stem = Math.abs(dx) < radius * 0.11 && dy > -radius * 0.42 && dy < radius * 0.5;
+        const arm = Math.abs(dy + radius * 0.05) < radius * 0.1 && dx > -radius * 0.42 && dx < radius * 0.42;
+        if (!ring && !stem && !arm) continue;
+        const i = y * face.w + x;
+        paintDeposit(face.burn, i, 220, 48, 26, 14, 235);
+        coverPixel(face, i);
+        marked = true;
+      }
+    }
+    if (marked) face.brandCount += 1;
+  }
+
+  function surveyFinish() {
+    let glossHit = 0;
+    let glossSeen = 0;
+    let charHit = 0;
+    let charSeen = 0;
+    let brands = 0;
+    faces.forEach((face) => {
+      brands += face.brandCount || 0;
+      const step = Math.max(6, Math.round(Math.min(face.w, face.h) / 22));
+      for (let y = 0; y < face.h; y += step) {
+        for (let x = 0; x < face.w; x += step) {
+          const i = y * face.w + x;
+          charSeen++;
+          if (face.char[i] > 50 && face.pixels[i * 4 + 3] < 80) charHit++;
+          if (face.mask[i]) {
+            glossSeen++;
+            if (face.gloss[i] > 90) glossHit++;
+          }
+        }
+      }
+    });
+    glossLevel = glossSeen ? glossHit / glossSeen : 0;
+    charLevel = charSeen ? charHit / charSeen : 0;
+    branded = brands > 0;
   }
 
   function stamp(face, cx, cy) {
@@ -2178,10 +2337,21 @@
             face.pixels[o + 1] = 0;
             face.pixels[o + 2] = 0;
           }
+          if (face.gloss[i]) {
+            face.gloss[i] = Math.max(0, face.gloss[i] - 70);
+            writeGloss(face, i, face.gloss[i]);
+          }
           uncoverPixel(face, i);
         } else if (tool === "burner") {
           paintDeposit(face.burn, i, 40, 62, 32, 16, 220);
           coverPixel(face, i);
+        } else if (tool === "torch") {
+          const fall = 1 - Math.sqrt(dist2) / r;
+          const next = Math.min(220, face.char[i] + Math.max(1, Math.round(48 * fall)));
+          writeChar(face, i, next);
+          coverPixel(face, i);
+        } else if (tool === "gloss") {
+          writeGloss(face, i, Math.min(200, face.gloss[i] + 48));
         } else if (tool === "airbrush") {
           const fall = 1 - Math.sqrt(dist2) / r;
           paintDeposit(face.pixels, i, Math.max(1, Math.round(14 * fall)), brushR, brushG, brushB, maxA);
@@ -2243,6 +2413,13 @@
     const face = faces[index];
     if (!face) return;
     const p = uvToCanvas(hit.uv, face);
+    if (tool === "brand") {
+      if (!last) stampBrand(face, p.x, p.y);
+      last = { x: p.x, y: p.y, face: index };
+      compositeFace(face);
+      updateCoverage();
+      return;
+    }
     if (last && last.face === index) stroke(face, last, p);
     else stamp(face, p.x, p.y);
     last = { x: p.x, y: p.y, face: index };
