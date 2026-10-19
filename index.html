@@ -427,6 +427,9 @@
   <div id="slots"></div>
   <h3>Tools</h3>
   <div id="tools"></div>
+  <h3>Wood</h3>
+  <p id="wood-help" class="mixer-help">Scrap is free. Better boards cost more and sell for more.</p>
+  <div id="wood-yard"></div>
   <h3>Shop</h3>
   <div id="shop"></div>
   <h3>Games</h3>
@@ -555,6 +558,8 @@
   const orderActions = document.getElementById("order-actions");
   const toolsEl = document.getElementById("tools");
   const shopEl = document.getElementById("shop");
+  const woodYard = document.getElementById("wood-yard");
+  const woodHelp = document.getElementById("wood-help");
   const gamesEl = document.getElementById("games");
   const shelfEl = document.getElementById("shelf-row");
   wellCanvas.width = 400;
@@ -794,6 +799,8 @@
     { id: "maple-slab", name: "Maple slab", wood: "maple", w: 3, d: 2, t: 0.2, knotMin: 0, knotMax: 1, knotScale: 0.05 },
     { id: "cedar-beam", name: "Cedar beam", wood: "cedar", w: 3.4, d: 1, t: 0.4, knotMin: 1, knotMax: 3, knotScale: 0.08 }
   ];
+  const SCRAP = { id: "scrap", name: "Scrap wood", wood: "pine", w: 1.5, d: 0.8, t: 0.18, knotMin: 1, knotMax: 2, knotScale: 0.12, scrap: true };
+  const SCRAP_PAY = 3;
 
   function surfaceArea(spec) {
     return 2 * (spec.w * spec.d + spec.w * spec.t + spec.d * spec.t);
@@ -837,6 +844,8 @@
   let onContract = false;
   let mixPick = null;
   let mixPickKey = "";
+  let benchId = "pine-plank";
+  let paidFor = 0;
   let matchScore = 1;
   let shelf = [];
   const unlocked = [true, true, false, false, false, false, false, false, false, false];
@@ -867,6 +876,8 @@
     onContract = false;
     mixPick = null;
     mixPickKey = "";
+    benchId = "pine-plank";
+    paidFor = 0;
     shelf = [];
     for (let i = 0; i < unlocked.length; i++) unlocked[i] = i < 2;
     for (let i = 0; i < saves.length; i++) saves[i] = null;
@@ -901,6 +912,12 @@
       contract = JSON.parse(JSON.stringify(data.contract));
     }
     onContract = !!data.holdingContract && !!contract;
+    if (typeof data.paidFor === "number") paidFor = Math.max(0, Math.round(data.paidFor));
+    if (typeof data.benchId === "string") benchId = data.benchId;
+    else if (sales > 0) {
+      benchId = onContract && contract ? contract.specId : SCRAP.id;
+      paidFor = onContract ? woodBuy(specById(benchId)) : 0;
+    }
   }
 
   function snapshot() {
@@ -912,7 +929,8 @@
       saves: saves.map((saved) => saved ? { hex: saved.hex, amounts: saved.amounts.slice() } : null),
       shelf: shelf.slice(),
       contract: contract ? JSON.parse(JSON.stringify(contract)) : null,
-      holdingContract: onContract
+      holdingContract: onContract,
+      benchId, paidFor
     };
   }
 
@@ -976,11 +994,13 @@
 
   const TURN_IN = 0.6;
 
-  function woodCost(spec) {
-    return Math.max(4, Math.round(piecePrice(spec) * 0.6));
+  function woodBuy(spec) {
+    if (!spec || spec.scrap) return 0;
+    return Math.max(3, Math.round(piecePrice(spec) * 0.5));
   }
 
   function sellCash(spec) {
+    if (spec && spec.scrap) return SCRAP_PAY;
     return piecePrice(spec);
   }
 
@@ -993,19 +1013,14 @@
   }
 
   function specById(id) {
-    return STOCK.find((spec) => spec.id === id) || STOCK[0];
+    if (id === SCRAP.id) return SCRAP;
+    return STOCK.find((spec) => spec.id === id) || SCRAP;
   }
 
   function rollContract() {
     const spec = STOCK[Math.floor(Math.random() * STOCK.length)];
     contract = { specId: spec.id, order: rollOrder(spec) };
     onContract = false;
-  }
-
-  function rollYard() {
-    const choices = STOCK.filter((spec) => !contract || spec.id !== contract.specId);
-    const pool = choices.length ? choices : STOCK;
-    return pool[Math.floor(Math.random() * pool.length)];
   }
 
   function compositeFace(face) {
@@ -1113,7 +1128,7 @@
 
   function updatePieceUi() {
     const cash = sellCash(currentSpec);
-    const tag = sales === 0 ? "" : onContract ? " · contract" : " · shop";
+    const tag = sales === 0 ? "" : currentSpec.scrap ? " · scrap" : onContract ? " · contract" : " · yard";
     document.getElementById("piece").textContent = currentSpec.name + tag;
     document.getElementById("sell").textContent = "Sell for $" + cash;
     document.getElementById("sell-banner").textContent = "Sell for $" + cash;
@@ -1218,13 +1233,13 @@
     orderSwatches.replaceChildren();
     orderActions.replaceChildren();
     if (sales === 0 || !contract) {
-      orderCopy.textContent = "Cover this pine plank and sell it. After that, sell shop boards for cash or buy wood for a contract.";
+      orderCopy.textContent = "Cover this pine plank and sell it. Then the wood yard opens. Scrap is free, and better boards cost more.";
       orderMatch.textContent = "Sells for $" + sellCash(currentSpec) + ".";
       showMixGuide();
       return;
     }
     const spec = specById(contract.specId);
-    const cost = woodCost(spec);
+    const cost = woodBuy(spec);
     const top = Math.round(piecePrice(spec) * 2.4);
     orderCopy.textContent = contract.order.text;
     const faceMix = FACE_MIX[contract.order.color.name];
@@ -1241,10 +1256,9 @@
       orderMatch.textContent = "Match " + Math.round(matchScore * 100) + "%. Turn in at 60% for $" + completePay(currentSpec) + ", or sell the board for $" + sellCash(currentSpec) + ".";
       orderActions.appendChild(orderButton("Complete for $" + completePay(currentSpec), completeOrder, !canComplete()));
     } else {
-      orderMatch.textContent = spec.name + " costs $" + cost + ". Turning it in pays up to $" + top + ".";
-      orderActions.appendChild(orderButton("Buy wood $" + cost, buyContractWood, false));
+      orderMatch.textContent = spec.name + " is $" + cost + " in the wood yard. Turning it in pays up to $" + top + ".";
+      orderActions.appendChild(orderButton("Buy " + spec.name.toLowerCase() + " $" + cost, () => buyWood(spec), false));
     }
-    orderActions.appendChild(orderButton("Take a shop board", takeShopBoard, false));
   }
 
   function orderButton(label, action, disabled) {
@@ -1333,6 +1347,7 @@
     updatePieceUi();
     renderOrder();
     updateCoverage();
+    renderWood();
   }
 
   function rollSpec() {
@@ -1349,11 +1364,17 @@
     if (sales === 0) {
       contract = null;
       onContract = false;
+      benchId = STOCK[0].id;
+      paidFor = 0;
       mountPiece(STOCK[0], true);
-    } else {
-      if (!contract || !STOCK.some((spec) => spec.id === contract.specId)) rollContract();
-      mountPiece(onContract ? specById(contract.specId) : rollYard(), false);
+      return;
     }
+    if (!contract || !STOCK.some((spec) => spec.id === contract.specId)) rollContract();
+    const spec = specById(benchId);
+    onContract = spec.id === contract.specId;
+    if (spec.scrap) paidFor = 0;
+    benchId = spec.id;
+    mountPiece(spec, false);
   }
 
   loadProgress();
@@ -1570,7 +1591,36 @@
     renderSlots();
     renderTools();
     renderShop();
+    renderWood();
     renderGameSlots();
+  }
+
+  function renderWood() {
+    woodYard.replaceChildren();
+    if (sales === 0) {
+      woodHelp.textContent = "The wood yard opens after you sell this pine plank.";
+      return;
+    }
+    woodHelp.textContent = "Scrap is free. Better boards cost more and sell for more.";
+    const list = [SCRAP].concat(STOCK.slice().sort((a, b) => piecePrice(a) - piecePrice(b) || a.name.localeCompare(b.name)));
+    list.forEach((spec) => {
+      const cost = woodBuy(spec);
+      const onBench = currentSpec.id === spec.id;
+      const forOrder = contract && spec.id === contract.specId;
+      let label = spec.name;
+      if (onBench) label += " · on the bench";
+      else if (cost === 0) label += " · free";
+      else label += " · $" + cost;
+      if (forOrder && !onBench) label += " · order";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "clear shop-btn" + (!onBench && money + (painted > 0 ? 0 : paidFor) >= cost ? " afford" : "");
+      btn.textContent = label;
+      btn.disabled = onBench;
+      btn.title = "Sells for $" + sellCash(spec) + (forOrder ? ". The contract asks for this." : ".");
+      btn.addEventListener("click", () => buyWood(spec));
+      woodYard.appendChild(btn);
+    });
   }
 
   function buySlot(index) {
@@ -2294,8 +2344,10 @@
     if (shelf.length > 8) shelf.length = 8;
     if (wasContract || sales === 1) rollContract();
     else onContract = false;
+    paidFor = 0;
+    benchId = SCRAP.id;
     updateMoney();
-    mountPiece(rollYard(), false);
+    mountPiece(SCRAP, false);
     renderShelf();
     persist();
   }
@@ -2322,43 +2374,34 @@
     statusEl.textContent = "Turned in the " + sold.toLowerCase() + " for $" + pay + ".";
   }
 
-  function buyContractWood() {
-    if (!contract) return;
-    if (painted > 0) {
-      statusEl.textContent = "Sell or clear this board before buying the contract wood.";
+  function buyWood(spec) {
+    if (sales === 0) {
+      statusEl.textContent = "Sell the pine plank first. The wood yard opens after that.";
       return;
     }
-    const spec = specById(contract.specId);
-    const cost = woodCost(spec);
-    if (money < cost) {
-      statusEl.textContent = "The " + spec.name.toLowerCase() + " costs $" + cost + ". Sell a shop board to raise it.";
-      return;
-    }
-    money -= cost;
-    onContract = true;
-    updateMoney();
-    mountPiece(spec, false);
-    persist();
-    statusEl.textContent = "Bought the " + spec.name.toLowerCase() + " for $" + cost + ". " + contract.order.text;
-  }
-
-  function takeShopBoard() {
-    if (sales === 0) return;
+    if (currentSpec.id === spec.id) return;
     if (painted > 0) {
       statusEl.textContent = "Sell or clear this board before taking another.";
       return;
     }
-    let note = "Shop board is on the bench. Cover it and sell it for cash.";
-    if (onContract) {
-      const refund = woodCost(currentSpec);
-      money += refund;
-      onContract = false;
-      updateMoney();
-      note = "Returned the wood for $" + refund + ". Shop board is on the bench.";
+    const cost = woodBuy(spec);
+    const refund = paidFor;
+    if (money + refund < cost) {
+      statusEl.textContent = "The " + spec.name.toLowerCase() + " costs $" + cost + ". Sell scrap to raise it.";
+      return;
     }
-    mountPiece(rollYard(), false);
+    money += refund - cost;
+    paidFor = cost;
+    benchId = spec.id;
+    onContract = !!(contract && spec.id === contract.specId);
+    updateMoney();
+    mountPiece(spec, false);
     persist();
-    statusEl.textContent = note;
+    const name = spec.name.toLowerCase();
+    if (refund && cost) statusEl.textContent = "Returned $" + refund + " and put the " + name + " on the bench for $" + cost + ".";
+    else if (refund) statusEl.textContent = "Returned the wood for $" + refund + ". Scrap is on the bench.";
+    else if (cost) statusEl.textContent = "Bought the " + name + " for $" + cost + "." + (onContract ? " " + contract.order.text : " It sells for $" + sellCash(spec) + ".");
+    else statusEl.textContent = "Scrap is on the bench. It sells for $" + SCRAP_PAY + ".";
   }
 
   document.getElementById("clear").addEventListener("click", () => {
