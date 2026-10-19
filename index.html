@@ -464,7 +464,7 @@
   <span id="money">$0</span>
   <button id="sell" class="clear" type="button" disabled>Sell for $10</button>
   <button id="clear" class="clear" type="button">Clear</button>
-  <p id="status" role="status">Mix a color, cover the wood, and sell it. Later jobs ask for a finish. Right-drag to turn. Scroll to zoom.</p>
+  <p id="status" role="status">Click the bench to step up and work.</p>
 </header>
 <aside id="order">
   <h2>Order</h2>
@@ -1100,9 +1100,50 @@
   scene.fog = new THREE.Fog(0x2a211c, 16, 34);
 
   const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50);
-  const lookTarget = new THREE.Vector3(0, 0.22, 0);
-  camera.position.set(2.2, 1.95, 4.7);
-  camera.lookAt(lookTarget);
+  const lookTarget = new THREE.Vector3();
+  const VIEW_BACK = {
+    pos: new THREE.Vector3(0, 1.42, 7.15),
+    look: new THREE.Vector3(0, -0.55, 0.15)
+  };
+  const VIEW_WORK = {
+    pos: new THREE.Vector3(0, 1.82, 4.5),
+    look: new THREE.Vector3(0, 0.16, 0)
+  };
+  let atBench = false;
+  let viewAnim = null;
+
+  function applyView(view) {
+    camera.position.copy(view.pos);
+    lookTarget.copy(view.look);
+    camera.lookAt(lookTarget);
+  }
+
+  function stepViewTo(view, done) {
+    if (viewAnim) return;
+    viewAnim = {
+      fromPos: camera.position.clone(),
+      fromLook: lookTarget.clone(),
+      toPos: view.pos,
+      toLook: view.look,
+      t: 0,
+      done
+    };
+  }
+
+  function tickView(dt) {
+    if (!viewAnim) return;
+    viewAnim.t = Math.min(1, viewAnim.t + dt / 0.62);
+    const k = viewAnim.t * viewAnim.t * (3 - 2 * viewAnim.t);
+    camera.position.lerpVectors(viewAnim.fromPos, viewAnim.toPos, k);
+    lookTarget.lerpVectors(viewAnim.fromLook, viewAnim.toLook, k);
+    camera.lookAt(lookTarget);
+    if (viewAnim.t < 1) return;
+    const done = viewAnim.done;
+    viewAnim = null;
+    if (done) done();
+  }
+
+  applyView(VIEW_BACK);
 
   const renderer = new THREE.WebGLRenderer({ canvas: view, antialias: true });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1132,11 +1173,11 @@
   scene.add(fill);
 
   const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(16, 48),
-    new THREE.MeshStandardMaterial({ color: 0x14110f, roughness: 1 })
+    new THREE.PlaneGeometry(20, 24),
+    new THREE.MeshStandardMaterial({ color: 0x241c18, roughness: 1 })
   );
   floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -2.75;
+  floor.position.set(0, -1.48, 1.2);
   floor.receiveShadow = true;
   scene.add(floor);
 
@@ -1152,6 +1193,7 @@
       new THREE.MeshStandardMaterial({ color: wallTones[i % wallTones.length], roughness: 0.92 })
     );
     board.position.set((i - (wallCount - 1) / 2) * wallPitch, 0.95, -3.05);
+    board.userData.spot = "wall";
     board.castShadow = true;
     board.receiveShadow = true;
     workshop.add(board);
@@ -1166,6 +1208,7 @@
       new THREE.MeshStandardMaterial({ color: benchTones[i % benchTones.length], roughness: 0.88 })
     );
     slat.position.set(0.1, -1.22, -1.7 + i * benchPitch);
+    slat.userData.spot = "bench";
     slat.castShadow = true;
     slat.receiveShadow = true;
     workshop.add(slat);
@@ -1174,6 +1217,7 @@
   [[-3.85, -1.55], [3.95, -1.55], [-3.85, 2.15], [3.95, 2.15]].forEach(([x, z]) => {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.4, 0.2), legMat);
     leg.position.set(0.1 + x, -2.0, z);
+    leg.userData.spot = "bench";
     leg.castShadow = true;
     workshop.add(leg);
   });
@@ -1204,6 +1248,7 @@
     [rulerSide, rulerSide, new THREE.MeshStandardMaterial({ map: rulerMap, roughness: 0.62 }), rulerSide, rulerSide, rulerSide]
   );
   ruler.position.set(0.15, -1.12, 0.02);
+  ruler.userData.spot = "bench";
   ruler.castShadow = true;
   workshop.add(ruler);
 
@@ -1211,10 +1256,12 @@
   const canRimMat = new THREE.MeshStandardMaterial({ color: 0xd9d3c8, roughness: 0.32, metalness: 0.45 });
   const can = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.46, 24), canMat);
   can.position.set(-1.55, -0.91, 0.35);
+  can.userData.spot = "bench";
   can.castShadow = true;
   workshop.add(can);
   const canRim = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.035, 24), canRimMat);
   canRim.position.set(-1.55, -0.67, 0.35);
+  canRim.userData.spot = "bench";
   workshop.add(canRim);
   const pencil = new THREE.Mesh(
     new THREE.CylinderGeometry(0.028, 0.028, 0.95, 8),
@@ -1222,7 +1269,8 @@
   );
   pencil.rotation.z = Math.PI / 2;
   pencil.rotation.y = 0.35;
-  pencil.position.set(-1.05, -1.1, 0.95);
+  pencil.position.set(-1.15, -1.1, 0.15);
+  pencil.userData.spot = "bench";
   pencil.castShadow = true;
   workshop.add(pencil);
 
@@ -1603,7 +1651,8 @@
   let last = null;
   let rotX = 0;
   let rotY = 0;
-  const HINT = "Mix a color, cover the wood, and sell it. Later jobs ask for a finish. Right-drag to turn. Scroll to zoom.";
+  const APPROACH = "Click the bench to step up and work.";
+  const HINT = "Mix a color, cover the wood, and sell it. Later jobs ask for a finish. Right-drag to turn. Scroll to zoom. Click the wall to step back.";
   const amounts = [0, 0, 0, 0, 0, 0];
   let mix = 1;
   let swirl = 0;
@@ -1914,6 +1963,7 @@
     refreshMixerReadout();
     drawWell();
     persist();
+    stepBack();
     statusEl.textContent = message;
   }
 
@@ -2483,14 +2533,41 @@
     return { x: uv.x * face.w, y: (1 - uv.y) * face.h };
   }
 
-  function pick(event) {
+  function setPointer(event) {
     const rect = view.getBoundingClientRect();
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
+  }
+
+  function pick(event) {
+    setPointer(event);
     const hits = raycaster.intersectObject(plank, false);
     if (!hits.length || !hits[0].uv || !hits[0].face) return null;
     return hits[0];
+  }
+
+  function pickSpot(event) {
+    setPointer(event);
+    const hits = raycaster.intersectObjects(workshop.children, false);
+    return hits.length ? hits[0].object.userData.spot || null : null;
+  }
+
+  function stepForward() {
+    if (atBench || viewAnim) return;
+    stepViewTo(VIEW_WORK, () => {
+      atBench = true;
+      if (statusEl.textContent === APPROACH) statusEl.textContent = HINT;
+    });
+  }
+
+  function stepBack() {
+    if (!atBench || viewAnim) return;
+    atBench = false;
+    cursor.visible = false;
+    stepViewTo(VIEW_BACK, () => {
+      if (statusEl.textContent === HINT) statusEl.textContent = APPROACH;
+    });
   }
 
   function placeCursor(hit) {
@@ -2541,15 +2618,37 @@
   function endGesture() {
     mode = null;
     last = null;
-    view.style.cursor = "grab";
+    view.style.cursor = atBench ? "grab" : "default";
+  }
+
+  let pressX = 0;
+  let pressY = 0;
+
+  function pressTravel(event) {
+    return Math.hypot(event.clientX - pressX, event.clientY - pressY);
   }
 
   view.addEventListener("pointerdown", (event) => {
+    if (viewAnim) return;
     if (event.button !== 0 && event.button !== 2) return;
     event.preventDefault();
-    rotX = event.clientX;
-    rotY = event.clientY;
+    pressX = rotX = event.clientX;
+    pressY = rotY = event.clientY;
+    if (!atBench) {
+      if (event.button !== 0) return;
+      const hit = pick(event);
+      const spot = hit ? "plank" : pickSpot(event);
+      if (spot !== "bench" && spot !== "plank") return;
+      try { view.setPointerCapture(event.pointerId); } catch (err) { /* synthetic pointers */ }
+      mode = "approach";
+      return;
+    }
     const hit = pick(event);
+    if (event.button === 0 && !hit && pickSpot(event) === "wall") {
+      try { view.setPointerCapture(event.pointerId); } catch (err) { /* synthetic pointers */ }
+      mode = "retreat";
+      return;
+    }
     if (event.button === 2 || !hit) {
       try { view.setPointerCapture(event.pointerId); } catch (err) { /* synthetic pointers */ }
       mode = "rotate";
@@ -2570,7 +2669,21 @@
   });
 
   view.addEventListener("pointermove", (event) => {
+    if (viewAnim) return;
     if (mode && event.buttons === 0) endGesture();
+    if (!atBench) {
+      if (mode === "approach" && pressTravel(event) > 6) mode = "approach-drag";
+      cursor.visible = false;
+      if (mode) return;
+      const over = !!pick(event) || pickSpot(event) === "bench";
+      view.style.cursor = over ? "pointer" : "default";
+      return;
+    }
+    if (mode === "retreat") {
+      if (pressTravel(event) <= 6) return;
+      mode = "rotate";
+      view.style.cursor = "grabbing";
+    }
     if (mode === "rotate") {
       rotatePlank(event);
       const hit = pick(event);
@@ -2585,22 +2698,30 @@
     if (!hit) {
       cursor.visible = false;
       if (mode === "paint") last = null;
-      view.style.cursor = mode === "paint" ? "crosshair" : "grab";
+      view.style.cursor = mode === "paint" ? "crosshair" : (pickSpot(event) === "wall" ? "pointer" : "grab");
       return;
     }
     placeCursor(hit);
     if (mode === "paint") paintAt(hit);
   });
 
-  view.addEventListener("pointerup", endGesture);
+  view.addEventListener("pointerup", (event) => {
+    if (mode === "approach") stepForward();
+    else if (mode === "retreat") stepBack();
+    endGesture();
+  });
   view.addEventListener("pointercancel", endGesture);
   view.addEventListener("contextmenu", (event) => event.preventDefault());
-  view.addEventListener("lostpointercapture", endGesture);
+  view.addEventListener("lostpointercapture", () => {
+    if (mode === "approach" || mode === "approach-drag" || mode === "retreat") return;
+    endGesture();
+  });
   view.addEventListener("wheel", (event) => {
     event.preventDefault();
+    if (!atBench || viewAnim) return;
     const offset = _tmp.copy(camera.position).sub(lookTarget);
     const dist = offset.length();
-    const next = THREE.MathUtils.clamp(dist * (1 + Math.max(-0.35, Math.min(0.35, event.deltaY / 400))), 3.5, 9.5);
+    const next = THREE.MathUtils.clamp(dist * (1 + Math.max(-0.35, Math.min(0.35, event.deltaY / 400))), 3.4, 6.2);
     camera.position.copy(lookTarget).add(offset.multiplyScalar(next / dist));
   }, { passive: false });
 
@@ -2706,6 +2827,7 @@
     const dt = Math.min(0.05, (now - lastFrame) / 1000);
     lastFrame = now;
     stepWell(dt);
+    tickView(dt);
     updateCursorSize();
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
