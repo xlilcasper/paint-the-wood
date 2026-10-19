@@ -808,7 +808,12 @@
     { id: "maple-slab", name: "Maple slab", wood: "maple", w: 3, d: 2, t: 0.2, knotMin: 0, knotMax: 1, knotScale: 0.05 },
     { id: "cedar-beam", name: "Cedar beam", wood: "cedar", w: 3.4, d: 1, t: 0.4, knotMin: 1, knotMax: 3, knotScale: 0.08 }
   ];
-  const SCRAP = { id: "scrap", name: "Scrap wood", wood: "pine", w: 1.5, d: 0.8, t: 0.18, knotMin: 1, knotMax: 2, knotScale: 0.12, scrap: true };
+  const SCRAP = { id: "scrap", name: "Scrap wood", wood: "pine", w: 1.15, d: 0.62, t: 0.14, knotMin: 1, knotMax: 1, knotScale: 0.1, scrap: true };
+  const BRUSH_LADDER = [
+    { max: 42, cost: 6 },
+    { max: 72, cost: 15 },
+    { max: 120, cost: 28 }
+  ];
   const SCRAP_PAY = 3;
 
   function surfaceArea(spec) {
@@ -857,7 +862,7 @@
   let onContract = false;
   let mixPick = null;
   let mixPickKey = "";
-  let benchId = "pine-plank";
+  let benchId = "scrap";
   let paidFor = 0;
   let matchScore = 1;
   let shelf = [];
@@ -889,7 +894,7 @@
     onContract = false;
     mixPick = null;
     mixPickKey = "";
-    benchId = "pine-plank";
+    benchId = "scrap";
     paidFor = 0;
     shelf = [];
     for (let i = 0; i < unlocked.length; i++) unlocked[i] = i < 2;
@@ -902,7 +907,11 @@
     if (typeof data.money === "number") money = Math.max(0, Math.round(data.money));
     if (typeof data.sales === "number") sales = Math.max(0, Math.round(data.sales));
     if (data.maxParts === 12) maxParts = 12;
-    if (data.maxBrush === 120) maxBrush = 120;
+    if (typeof data.maxBrush === "number") {
+      const caps = [21].concat(BRUSH_LADDER.map((step) => step.max));
+      const kept = caps.filter((cap) => cap <= data.maxBrush).pop();
+      if (kept) maxBrush = kept;
+    }
     brownOwned = !!data.brownOwned;
     if (data.ownedTools) ownedTools = Object.assign(ownedTools, data.ownedTools);
     ownedTools.brush = true;
@@ -1302,7 +1311,7 @@
     orderSwatches.replaceChildren();
     orderActions.replaceChildren();
     if (sales === 0 || !contract) {
-      orderCopy.textContent = "Cover this pine plank and sell it. Then the wood yard opens. Scrap is free, and better boards cost more.";
+      orderCopy.textContent = "Cover this small scrap and sell it. It is short on purpose. Then bigger boards are in the wood yard.";
       orderMatch.textContent = "Sells for $" + sellCash(currentSpec) + ".";
       showMixGuide();
       return;
@@ -1433,9 +1442,9 @@
     if (sales === 0) {
       contract = null;
       onContract = false;
-      benchId = STOCK[0].id;
+      benchId = SCRAP.id;
       paidFor = 0;
-      mountPiece(STOCK[0], true);
+      mountPiece(SCRAP, true);
       return;
     }
     if (!contract || !STOCK.some((spec) => spec.id === contract.specId)) rollContract();
@@ -1669,7 +1678,7 @@
   function renderWood() {
     woodYard.replaceChildren();
     if (sales === 0) {
-      woodHelp.textContent = "The wood yard opens after you sell this pine plank.";
+      woodHelp.textContent = "The wood yard opens after you sell this scrap.";
       return;
     }
     woodHelp.textContent = "Scrap is free. Better boards cost more and sell for more.";
@@ -1830,7 +1839,7 @@
       return;
     }
     applySnapshot(null);
-    presentGame("New game. The pine plank is on the bench.");
+    presentGame("New game. A small scrap is on the bench.");
   }
 
   function saveGame(index) {
@@ -1991,7 +2000,8 @@
     shopEl.replaceChildren();
     if (!brownOwned) shopEl.appendChild(shopButton("Brown can $15", 15, buyBrown));
     if (maxParts < 12) shopEl.appendChild(shopButton("Deeper well $25", 25, buyWell));
-    if (maxBrush < 120) shopEl.appendChild(shopButton("Bigger brush $30", 30, buyBrushSize));
+    const brushStep = nextBrushUpgrade();
+    if (brushStep) shopEl.appendChild(shopButton("Bigger brush $" + brushStep.cost, brushStep.cost, buyBrushSize));
     if (!shopEl.childElementCount) {
       const done = document.createElement("p");
       done.className = "mixer-help";
@@ -2062,19 +2072,24 @@
     statusEl.textContent = "The well holds 12 pours now.";
   }
 
+  function nextBrushUpgrade() {
+    return BRUSH_LADDER.find((step) => step.max > maxBrush) || null;
+  }
+
   function buyBrushSize() {
-    if (maxBrush >= 120) return;
-    if (money < 30) {
-      statusEl.textContent = "A bigger brush costs $30.";
+    const step = nextBrushUpgrade();
+    if (!step) return;
+    if (money < step.cost) {
+      statusEl.textContent = "The next brush size costs $" + step.cost + ".";
       return;
     }
-    money -= 30;
-    maxBrush = 120;
+    money -= step.cost;
+    maxBrush = step.max;
     applyBrushMax();
     updateMoney();
     updateCursorSize();
     persist();
-    statusEl.textContent = "The size slider now goes up to 120.";
+    statusEl.textContent = "The size slider now goes up to " + step.max + ".";
   }
 
   function syncOpacityControl() {
@@ -2553,7 +2568,7 @@
 
   function buyWood(spec) {
     if (sales === 0) {
-      statusEl.textContent = "Sell the pine plank first. The wood yard opens after that.";
+      statusEl.textContent = "Sell this scrap first. The wood yard opens after that.";
       return;
     }
     if (currentSpec.id === spec.id) return;
