@@ -263,7 +263,7 @@
     z-index: 2;
     top: 118px;
     right: 12px;
-    width: 220px;
+    width: 256px;
     box-sizing: border-box;
     padding: 12px 14px 14px;
     background: rgba(28, 20, 16, 0.92);
@@ -289,18 +289,64 @@
     gap: 8px;
     margin-top: 8px;
   }
-  .swatch-pair {
+  button.swatch-pair {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex: 1 1 100%;
+    width: 100%;
+    margin: 0;
+    padding: 4px 6px;
+    background: transparent;
+    color: inherit;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font: inherit;
     font-size: 12px;
+    line-height: 1.3;
+    text-align: left;
+    cursor: pointer;
+  }
+  button.swatch-pair:hover { background: rgba(246, 234, 216, 0.08); }
+  button.swatch-pair.picked {
+    border-color: rgba(224, 161, 90, 0.95);
+    background: rgba(224, 161, 90, 0.14);
   }
   .order-dot {
     width: 16px;
     height: 16px;
     border-radius: 50%;
     border: 1px solid rgba(246, 234, 216, 0.45);
+    flex: none;
   }
+  #order-recipe {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #f0d7a8;
+  }
+  #order-recipe:empty { display: none; }
+  .can.wanted {
+    outline: 2px solid #e0a15a;
+    outline-offset: 3px;
+  }
+  .can .pours {
+    position: absolute;
+    z-index: 1;
+    right: -7px;
+    top: -7px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    border-radius: 99px;
+    background: #e0a15a;
+    color: #2a1c12;
+    font: 700 11px "Segoe UI", sans-serif;
+    line-height: 16px;
+    text-align: center;
+    pointer-events: none;
+  }
+  .can .pours[hidden] { display: none; }
   #order-match {
     margin: 8px 0 0;
     font-size: 12px;
@@ -352,6 +398,7 @@
   <h2>Mixing palette</h2>
   <p class="mixer-help">Click a can to pour it in. Drag the well until the color swirls, then let it even out.</p>
   <div id="cans"></div>
+  <p id="mix-guide" class="mixer-help" hidden></p>
   <div id="well-wrap">
     <canvas id="well" width="400" height="400"></canvas>
   </div>
@@ -394,6 +441,7 @@
   <h2>Order</h2>
   <p id="order-copy">Cover the whole piece, then sell it.</p>
   <div id="order-swatches"></div>
+  <p id="order-recipe"></p>
   <p id="order-match"></p>
   <div id="order-actions"></div>
 </aside>
@@ -432,6 +480,22 @@
     { name: "golden yellow", r: 210, g: 156, b: 48 },
     { name: "ink black", r: 32, g: 30, b: 28 }
   ];
+  const FACE_MIX = {
+    "barn red": [3, 0, 0, 0, 1],
+    "forest green": [0, 1, 1, 0, 0],
+    "navy": [0, 0, 2, 0, 1],
+    "cream": [0, 1, 0, 2, 0],
+    "golden yellow": [0, 1, 0, 0, 0],
+    "ink black": [0, 0, 0, 1, 6]
+  };
+  const END_MIX = {
+    "barn red": [1, 0, 0, 0, 2],
+    "forest green": [0, 1, 1, 0, 2],
+    "navy": [0, 0, 1, 0, 2],
+    "cream": [0, 0, 0, 1, 2],
+    "golden yellow": [0, 2, 0, 0, 3],
+    "ink black": [0, 0, 0, 0, 1]
+  };
   const SLOT_COST = [0, 0, 10, 15, 20, 30, 40, 55, 70, 90];
   const PIGMENTS = [
     { name: "Red", hex: "#c23b2e", r: 194, g: 59, b: 46 },
@@ -465,6 +529,8 @@
   const orderCopy = document.getElementById("order-copy");
   const orderSwatches = document.getElementById("order-swatches");
   const orderMatch = document.getElementById("order-match");
+  const orderRecipe = document.getElementById("order-recipe");
+  const mixGuide = document.getElementById("mix-guide");
   const orderActions = document.getElementById("order-actions");
   const toolsEl = document.getElementById("tools");
   const shopEl = document.getElementById("shop");
@@ -746,6 +812,8 @@
   let order = null;
   let contract = null;
   let onContract = false;
+  let mixPick = null;
+  let mixPickKey = "";
   let matchScore = 1;
   let shelf = [];
   const unlocked = [true, true, false, false, false, false, false, false, false, false];
@@ -991,24 +1059,108 @@
     }
   }
 
+  function mixPhrase(counts) {
+    if (!counts) return "";
+    const parts = [];
+    counts.forEach((n, i) => {
+      if (!n) return;
+      parts.push(n + " " + PIGMENTS[i].name.toLowerCase());
+    });
+    if (parts.length < 2) return parts[0] || "";
+    if (parts.length === 2) return parts[0] + " and " + parts[1];
+    return parts.slice(0, -1).join(", ") + ", and " + parts[parts.length - 1];
+  }
+
+  function usesSeveral(counts) {
+    return !!counts && counts.filter((n) => n > 0).length > 1;
+  }
+
+  function coatGuide(order) {
+    const face = FACE_MIX[order.color.name];
+    const end = order.kind === "two-tone" ? END_MIX[order.color.name] : null;
+    const stir = usesSeveral(face) || usesSeveral(end) ? "Stir until the color evens out. " : "";
+    const between = order.kind === "two-tone" ? "Empty the well before mixing the ends. " : "";
+    const opacity = order.kind === "stain"
+      ? "Set opacity to about 40% before you paint, so the grain still shows."
+      : "Set opacity to 60% or more, and paint until the color stops changing.";
+    return between + stir + opacity;
+  }
+
+  function syncMixPick() {
+    const key = sales === 0 || !contract ? "" : contract.order.kind + "|" + contract.order.color.name;
+    if (key !== mixPickKey) {
+      mixPickKey = key;
+      mixPick = null;
+    }
+  }
+
+  function pickedCounts() {
+    const job = contract && contract.order;
+    if (!job || sales === 0 || !mixPick) return null;
+    if (mixPick === "end") return job.kind === "two-tone" ? END_MIX[job.color.name] || null : null;
+    if (mixPick === "face") return FACE_MIX[job.color.name] || null;
+    return null;
+  }
+
+  function markOrderCans() {
+    const counts = pickedCounts() || [0, 0, 0, 0, 0, 0];
+    document.querySelectorAll("#cans .can").forEach((btn) => {
+      const index = Number(btn.dataset.index);
+      const n = counts[index] || 0;
+      const name = PIGMENTS[index].name;
+      btn.classList.toggle("wanted", n > 0);
+      btn.title = n ? "Pour " + n + " " + name.toLowerCase() : "Pour " + name;
+      const badge = btn.querySelector(".pours");
+      if (!badge) return;
+      badge.hidden = n === 0;
+      badge.textContent = n ? String(n) : "";
+    });
+  }
+
+  function showMixGuide() {
+    syncMixPick();
+    const job = contract && contract.order;
+    const face = job && FACE_MIX[job.color.name];
+    if (sales === 0 || !face) {
+      orderRecipe.textContent = "";
+      mixGuide.hidden = true;
+      mixGuide.textContent = "";
+      markOrderCans();
+      return;
+    }
+    orderRecipe.textContent = coatGuide(job);
+    const counts = pickedCounts();
+    mixGuide.hidden = false;
+    mixGuide.textContent = counts
+      ? "Pour " + mixPhrase(counts) + "."
+      : "Click a color on the order to mark the cans.";
+    markOrderCans();
+  }
+
   function renderOrder() {
+    syncMixPick();
     orderSwatches.replaceChildren();
     orderActions.replaceChildren();
     if (sales === 0 || !contract) {
       orderCopy.textContent = "Cover this pine plank and sell it. After that, sell shop boards for cash or buy wood for a contract.";
       orderMatch.textContent = "Sells for $" + sellCash(currentSpec) + ".";
+      showMixGuide();
       return;
     }
     const spec = specById(contract.specId);
     const cost = woodCost(spec);
     const top = Math.round(piecePrice(spec) * 2.4);
     orderCopy.textContent = contract.order.text;
+    const faceMix = FACE_MIX[contract.order.color.name];
+    const endMix = END_MIX[contract.order.color.name];
     if (contract.order.kind === "two-tone") {
-      addOrderSwatch(contract.order.color, "Faces");
-      addOrderSwatch(contract.order.end, "Ends");
+      addOrderSwatch(contract.order.color, faceMix ? "Faces: " + mixPhrase(faceMix) : "Faces", "face");
+      addOrderSwatch(contract.order.end, endMix ? "Ends: " + mixPhrase(endMix) : "Ends", "end");
     } else {
-      addOrderSwatch(contract.order.color, contract.order.kind === "stain" ? "Light stain" : "Solid");
+      const kindLabel = contract.order.kind === "stain" ? "Light stain" : "Solid";
+      addOrderSwatch(contract.order.color, faceMix ? mixPhrase(faceMix) : kindLabel, "face");
     }
+    showMixGuide();
     if (onContract) {
       orderMatch.textContent = "Match " + Math.round(matchScore * 100) + "%. Turn in at 60% for $" + completePay(currentSpec) + ", or sell the board for $" + sellCash(currentSpec) + ".";
       orderActions.appendChild(orderButton("Complete for $" + completePay(currentSpec), completeOrder, !canComplete()));
@@ -1029,15 +1181,22 @@
     return btn;
   }
 
-  function addOrderSwatch(color, label) {
-    const wrap = document.createElement("div");
-    wrap.className = "swatch-pair";
+  function addOrderSwatch(color, label, pick) {
+    const wrap = document.createElement("button");
+    wrap.type = "button";
+    wrap.className = "swatch-pair" + (mixPick === pick ? " picked" : "");
+    wrap.setAttribute("aria-pressed", mixPick === pick ? "true" : "false");
+    wrap.title = "Highlight this mix on the cans";
     const dot = document.createElement("span");
     dot.className = "order-dot";
     dot.style.background = toHex(color);
     const name = document.createElement("span");
     name.textContent = label;
     wrap.append(dot, name);
+    wrap.addEventListener("click", () => {
+      mixPick = mixPick === pick ? null : pick;
+      renderOrder();
+    });
     orderSwatches.appendChild(wrap);
   }
 
@@ -1499,15 +1658,20 @@
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "can";
+      btn.dataset.index = String(index);
       btn.style.background = pigment.hex;
       btn.title = "Pour " + pigment.name;
       btn.setAttribute("aria-label", "Pour " + pigment.name);
       const lid = document.createElement("span");
       lid.className = "lid";
-      btn.appendChild(lid);
+      const badge = document.createElement("span");
+      badge.className = "pours";
+      badge.hidden = true;
+      btn.append(lid, badge);
       btn.addEventListener("click", () => addPaint(index));
       cansEl.appendChild(btn);
     });
+    markOrderCans();
   }
 
   function renderTools() {
