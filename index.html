@@ -304,8 +304,23 @@
   #order-match {
     margin: 8px 0 0;
     font-size: 12px;
+    line-height: 1.35;
     opacity: 0.85;
   }
+  #order-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  #order-actions button { width: 100%; }
+  #banner .actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 12px;
+  }
+  #banner .actions button { margin-top: 0; }
   #shelf {
     position: fixed;
     z-index: 2;
@@ -380,15 +395,19 @@
   <p id="order-copy">Cover the whole piece, then sell it.</p>
   <div id="order-swatches"></div>
   <p id="order-match"></p>
+  <div id="order-actions"></div>
 </aside>
 <footer id="shelf">
   <span>Shelf</span>
   <div id="shelf-row">Sold pieces show up here.</div>
 </footer>
 <div id="banner" hidden>
-  <h2>Ready to sell</h2>
+  <h2 id="banner-title">Ready to sell</h2>
   <p id="banner-copy">The pine plank is painted.</p>
-  <button id="sell-banner" class="clear" type="button">Sell for $10</button>
+  <div class="actions">
+    <button id="complete-banner" class="clear" type="button" hidden>Complete</button>
+    <button id="sell-banner" class="clear" type="button">Sell for $10</button>
+  </div>
 </div>
 <script src="three.min.js"></script>
 <script>
@@ -446,6 +465,7 @@
   const orderCopy = document.getElementById("order-copy");
   const orderSwatches = document.getElementById("order-swatches");
   const orderMatch = document.getElementById("order-match");
+  const orderActions = document.getElementById("order-actions");
   const toolsEl = document.getElementById("tools");
   const shopEl = document.getElementById("shop");
   const shelfEl = document.getElementById("shelf-row");
@@ -724,6 +744,8 @@
   let tool = "brush";
   let ownedTools = { brush: true, remover: false, marker: false, airbrush: false, burner: false };
   let order = null;
+  let contract = null;
+  let onContract = false;
   let matchScore = 1;
   let shelf = [];
   const unlocked = [true, true, false, false, false, false, false, false, false, false];
@@ -765,13 +787,16 @@
         });
       }
       if (Array.isArray(data.shelf)) shelf = data.shelf.slice(0, 8);
+      if (data.contract && data.contract.specId && data.contract.order) contract = data.contract;
+      onContract = !!data.holdingContract && !!contract;
     } catch (err) { /* ignore a broken save */ }
   }
 
   function persist() {
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        money, sales, maxParts, brownOwned, ownedTools, tool, unlocked, saves, shelf
+        money, sales, maxParts, brownOwned, ownedTools, tool, unlocked, saves, shelf,
+        contract, holdingContract: onContract
       }));
     } catch (err) { /* private mode */ }
   }
@@ -805,10 +830,38 @@
     };
   }
 
-  function payoutAmount() {
-    const base = piecePrice(currentSpec);
-    if (!order) return base;
-    return Math.max(1, Math.round(base * (0.5 + matchScore)));
+  const TURN_IN = 0.6;
+
+  function woodCost(spec) {
+    return Math.max(4, Math.round(piecePrice(spec) * 0.6));
+  }
+
+  function sellCash(spec) {
+    return piecePrice(spec);
+  }
+
+  function completePay(spec) {
+    return Math.round(piecePrice(spec) * (1.4 + matchScore));
+  }
+
+  function canComplete() {
+    return onContract && won && matchScore >= TURN_IN;
+  }
+
+  function specById(id) {
+    return STOCK.find((spec) => spec.id === id) || STOCK[0];
+  }
+
+  function rollContract() {
+    const spec = STOCK[Math.floor(Math.random() * STOCK.length)];
+    contract = { specId: spec.id, order: rollOrder(spec) };
+    onContract = false;
+  }
+
+  function rollYard() {
+    const choices = STOCK.filter((spec) => !contract || spec.id !== contract.specId);
+    const pool = choices.length ? choices : STOCK;
+    return pool[Math.floor(Math.random() * pool.length)];
   }
 
   function compositeFace(face) {
@@ -915,30 +968,65 @@
   }
 
   function updatePieceUi() {
-    const pay = payoutAmount();
-    document.getElementById("piece").textContent = currentSpec.name;
-    document.getElementById("sell").textContent = "Sell for $" + pay;
-    document.getElementById("sell-banner").textContent = "Sell for $" + pay;
-    document.getElementById("banner-copy").textContent = order
-      ? "Match " + Math.round(matchScore * 100) + "%. This pays $" + pay + "."
-      : "The " + currentSpec.name.toLowerCase() + " is painted.";
+    const cash = sellCash(currentSpec);
+    const tag = sales === 0 ? "" : onContract ? " · contract" : " · shop";
+    document.getElementById("piece").textContent = currentSpec.name + tag;
+    document.getElementById("sell").textContent = "Sell for $" + cash;
+    document.getElementById("sell-banner").textContent = "Sell for $" + cash;
+    const completeBtn = document.getElementById("complete-banner");
+    const title = document.getElementById("banner-title");
+    if (onContract) {
+      const pay = completePay(currentSpec);
+      completeBtn.hidden = false;
+      completeBtn.disabled = !canComplete();
+      completeBtn.textContent = "Complete for $" + pay;
+      title.textContent = canComplete() ? "Ready to turn in" : "Ready to sell";
+      document.getElementById("banner-copy").textContent = canComplete()
+        ? "The order is close enough to turn in, or sell the board for $" + cash + "."
+        : "Match " + Math.round(matchScore * 100) + "%. Turn in at 60%, or sell the board for $" + cash + ".";
+    } else {
+      completeBtn.hidden = true;
+      title.textContent = "Ready to sell";
+      document.getElementById("banner-copy").textContent = "Sell the " + currentSpec.name.toLowerCase() + " for $" + cash + ".";
+    }
   }
 
   function renderOrder() {
     orderSwatches.replaceChildren();
-    if (!order) {
-      orderCopy.textContent = "Cover the whole piece, then sell it. Later jobs ask for a color.";
-      orderMatch.textContent = "Pays $" + payoutAmount() + ".";
+    orderActions.replaceChildren();
+    if (sales === 0 || !contract) {
+      orderCopy.textContent = "Cover this pine plank and sell it. After that, sell shop boards for cash or buy wood for a contract.";
+      orderMatch.textContent = "Sells for $" + sellCash(currentSpec) + ".";
       return;
     }
-    orderCopy.textContent = order.text;
-    if (order.kind === "two-tone") {
-      addOrderSwatch(order.color, "Faces");
-      addOrderSwatch(order.end, "Ends");
+    const spec = specById(contract.specId);
+    const cost = woodCost(spec);
+    const top = Math.round(piecePrice(spec) * 2.4);
+    orderCopy.textContent = contract.order.text;
+    if (contract.order.kind === "two-tone") {
+      addOrderSwatch(contract.order.color, "Faces");
+      addOrderSwatch(contract.order.end, "Ends");
     } else {
-      addOrderSwatch(order.color, order.kind === "stain" ? "Light stain" : "Solid");
+      addOrderSwatch(contract.order.color, contract.order.kind === "stain" ? "Light stain" : "Solid");
     }
-    orderMatch.textContent = "Match " + Math.round(matchScore * 100) + "% · base $" + piecePrice(currentSpec) + " · pays $" + payoutAmount();
+    if (onContract) {
+      orderMatch.textContent = "Match " + Math.round(matchScore * 100) + "%. Turn in at 60% for $" + completePay(currentSpec) + ", or sell the board for $" + sellCash(currentSpec) + ".";
+      orderActions.appendChild(orderButton("Complete for $" + completePay(currentSpec), completeOrder, !canComplete()));
+    } else {
+      orderMatch.textContent = spec.name + " costs $" + cost + ". Turning it in pays up to $" + top + ".";
+      orderActions.appendChild(orderButton("Buy wood $" + cost, buyContractWood, false));
+    }
+    orderActions.appendChild(orderButton("Take a shop board", takeShopBoard, false));
+  }
+
+  function orderButton(label, action, disabled) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "clear";
+    btn.textContent = label;
+    btn.disabled = disabled;
+    btn.addEventListener("click", action);
+    return btn;
   }
 
   function addOrderSwatch(color, label) {
@@ -1002,7 +1090,7 @@
     plank.castShadow = true;
     plank.receiveShadow = true;
     scene.add(plank);
-    order = (!first && sales > 0) ? rollOrder(spec) : null;
+    order = onContract && contract ? contract.order : null;
     matchScore = order ? 0 : 1;
     document.getElementById("sell").disabled = true;
     bannerEl.hidden = true;
@@ -1018,8 +1106,14 @@
   }
 
   loadProgress();
-  if (sales > 0) mountPiece(rollSpec(), false);
-  else mountPiece(STOCK[0], true);
+  if (sales === 0) {
+    contract = null;
+    onContract = false;
+    mountPiece(STOCK[0], true);
+  } else {
+    if (!contract || !STOCK.some((spec) => spec.id === contract.specId)) rollContract();
+    mountPiece(onContract ? specById(contract.specId) : rollYard(), false);
+  }
 
   const paintColor = new THREE.Color("#8a5a32");
   const bristleMat = new THREE.MeshStandardMaterial({ color: paintColor, roughness: 0.55 });
@@ -1603,19 +1697,18 @@
     pctEl.textContent = pct.toFixed(1) + "%";
     fillEl.style.width = pct + "%";
     matchScore = measureMatch();
+    const covered = ratio >= GOAL;
+    won = covered;
+    document.getElementById("sell").disabled = !covered;
+    bannerEl.hidden = !covered;
     renderOrder();
     updatePieceUi();
-    if (ratio >= GOAL) {
-      if (!won) {
-        won = true;
-        document.getElementById("sell").disabled = false;
-        bannerEl.hidden = false;
-        statusEl.textContent = "Ready to sell for $" + payoutAmount() + ".";
-      }
-    } else if (won) {
-      won = false;
-      document.getElementById("sell").disabled = true;
-      bannerEl.hidden = true;
+    if (covered) {
+      statusEl.textContent = onContract
+        ? (canComplete()
+          ? "Ready to turn in for $" + completePay(currentSpec) + "."
+          : "Covered. Match is " + Math.round(matchScore * 100) + "%. Sell for $" + sellCash(currentSpec) + ", or bring the color closer.")
+        : "Ready to sell for $" + sellCash(currentSpec) + ".";
     }
   }
 
@@ -1833,21 +1926,78 @@
     updateCoverage();
   }
 
-  function sellPlank() {
-    if (!won) return;
-    const pay = payoutAmount();
-    const sold = currentSpec.name;
-    const swatch = order ? toHex(order.color) : woodHex(currentSpec.wood);
+  function finishPiece(pay, swatch, wasContract) {
     money += pay;
     sales += 1;
-    shelf.unshift({ name: sold, wood: currentSpec.wood, pay, swatch });
+    shelf.unshift({ name: currentSpec.name, wood: currentSpec.wood, pay, swatch });
     if (shelf.length > 8) shelf.length = 8;
+    if (wasContract || sales === 1) rollContract();
+    else onContract = false;
     updateMoney();
-    const next = rollSpec();
-    mountPiece(next, false);
+    mountPiece(rollYard(), false);
     renderShelf();
     persist();
-    statusEl.textContent = "Sold the " + sold.toLowerCase() + " for $" + pay + ". Up next: " + next.name.toLowerCase() + ".";
+  }
+
+  function sellPlank() {
+    if (!won) return;
+    const pay = sellCash(currentSpec);
+    const sold = currentSpec.name;
+    const wasContract = onContract;
+    finishPiece(pay, woodHex(currentSpec.wood), wasContract);
+    statusEl.textContent = "Sold the " + sold.toLowerCase() + " for $" + pay + ".";
+  }
+
+  function completeOrder() {
+    if (!canComplete()) {
+      if (!onContract) statusEl.textContent = "Buy the contract wood before turning the order in.";
+      else if (!won) statusEl.textContent = "Cover the whole piece before turning it in.";
+      else statusEl.textContent = "The finish needs to be closer. Match is " + Math.round(matchScore * 100) + "%.";
+      return;
+    }
+    const pay = completePay(currentSpec);
+    const sold = currentSpec.name;
+    finishPiece(pay, toHex(contract.order.color), true);
+    statusEl.textContent = "Turned in the " + sold.toLowerCase() + " for $" + pay + ".";
+  }
+
+  function buyContractWood() {
+    if (!contract) return;
+    if (painted > 0) {
+      statusEl.textContent = "Sell or clear this board before buying the contract wood.";
+      return;
+    }
+    const spec = specById(contract.specId);
+    const cost = woodCost(spec);
+    if (money < cost) {
+      statusEl.textContent = "The " + spec.name.toLowerCase() + " costs $" + cost + ". Sell a shop board to raise it.";
+      return;
+    }
+    money -= cost;
+    onContract = true;
+    updateMoney();
+    mountPiece(spec, false);
+    persist();
+    statusEl.textContent = "Bought the " + spec.name.toLowerCase() + " for $" + cost + ". " + contract.order.text;
+  }
+
+  function takeShopBoard() {
+    if (sales === 0) return;
+    if (painted > 0) {
+      statusEl.textContent = "Sell or clear this board before taking another.";
+      return;
+    }
+    let note = "Shop board is on the bench. Cover it and sell it for cash.";
+    if (onContract) {
+      const refund = woodCost(currentSpec);
+      money += refund;
+      onContract = false;
+      updateMoney();
+      note = "Returned the wood for $" + refund + ". Shop board is on the bench.";
+    }
+    mountPiece(rollYard(), false);
+    persist();
+    statusEl.textContent = note;
   }
 
   document.getElementById("clear").addEventListener("click", () => {
@@ -1856,6 +2006,7 @@
   });
   document.getElementById("sell").addEventListener("click", sellPlank);
   document.getElementById("sell-banner").addEventListener("click", sellPlank);
+  document.getElementById("complete-banner").addEventListener("click", completeOrder);
 
   function resize() {
     const w = view.clientWidth || window.innerWidth;
