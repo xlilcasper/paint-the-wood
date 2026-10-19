@@ -1096,8 +1096,8 @@
   }
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x221c18);
-  scene.fog = new THREE.Fog(0x221c18, 12, 24);
+  scene.background = new THREE.Color(0x2a211c);
+  scene.fog = new THREE.Fog(0x2a211c, 16, 34);
 
   const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50);
   const lookTarget = new THREE.Vector3(0, 0.22, 0);
@@ -1120,25 +1120,111 @@
   sun.shadow.mapSize.set(1024, 1024);
   sun.shadow.bias = -0.00035;
   const shadowCam = sun.shadow.camera;
-  shadowCam.left = -4;
-  shadowCam.right = 4;
-  shadowCam.top = 4;
-  shadowCam.bottom = -4;
+  shadowCam.left = -7;
+  shadowCam.right = 7;
+  shadowCam.top = 7;
+  shadowCam.bottom = -7;
   shadowCam.near = 0.4;
-  shadowCam.far = 14;
+  shadowCam.far = 18;
   scene.add(sun);
   const fill = new THREE.DirectionalLight(0xffe6cc, 0.45);
   fill.position.set(2.4, 1.2, -2.2);
   scene.add(fill);
 
-  const ground = new THREE.Mesh(
-    new THREE.CircleGeometry(14, 48),
-    new THREE.MeshStandardMaterial({ color: 0x171310, roughness: 1 })
+  const floor = new THREE.Mesh(
+    new THREE.CircleGeometry(16, 48),
+    new THREE.MeshStandardMaterial({ color: 0x14110f, roughness: 1 })
   );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -1.7;
-  ground.receiveShadow = true;
-  scene.add(ground);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -2.75;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  const workshop = new THREE.Group();
+  scene.add(workshop);
+  const wallTones = [0x8a6244, 0x7c583c, 0x96704c, 0x6e4e34, 0xa07852, 0x84603e];
+  const wallCount = 26;
+  const wallBoardW = 0.46;
+  const wallPitch = 0.5;
+  for (let i = 0; i < wallCount; i++) {
+    const board = new THREE.Mesh(
+      new THREE.BoxGeometry(wallBoardW, 7.6, 0.14),
+      new THREE.MeshStandardMaterial({ color: wallTones[i % wallTones.length], roughness: 0.92 })
+    );
+    board.position.set((i - (wallCount - 1) / 2) * wallPitch, 0.95, -3.05);
+    board.castShadow = true;
+    board.receiveShadow = true;
+    workshop.add(board);
+  }
+
+  const benchTones = [0x5c4030, 0x4a3226, 0x684838, 0x3e2a1e];
+  const benchCount = 9;
+  const benchPitch = 0.5;
+  for (let i = 0; i < benchCount; i++) {
+    const slat = new THREE.Mesh(
+      new THREE.BoxGeometry(8.4, 0.16, 0.46),
+      new THREE.MeshStandardMaterial({ color: benchTones[i % benchTones.length], roughness: 0.88 })
+    );
+    slat.position.set(0.1, -1.22, -1.7 + i * benchPitch);
+    slat.castShadow = true;
+    slat.receiveShadow = true;
+    workshop.add(slat);
+  }
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x2e2018, roughness: 0.94 });
+  [[-3.85, -1.55], [3.95, -1.55], [-3.85, 2.15], [3.95, 2.15]].forEach(([x, z]) => {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.4, 0.2), legMat);
+    leg.position.set(0.1 + x, -2.0, z);
+    leg.castShadow = true;
+    workshop.add(leg);
+  });
+
+  const rulerCanvas = document.createElement("canvas");
+  rulerCanvas.width = 512;
+  rulerCanvas.height = 72;
+  const rulerDraw = rulerCanvas.getContext("2d");
+  rulerDraw.fillStyle = "#efe2c4";
+  rulerDraw.fillRect(0, 0, 512, 72);
+  rulerDraw.fillStyle = "#c23b2e";
+  rulerDraw.fillRect(0, 0, 512, 8);
+  rulerDraw.strokeStyle = "#2a1c12";
+  rulerDraw.lineWidth = 3;
+  for (let i = 0; i <= 16; i++) {
+    const x = (i / 16) * 512;
+    const h = i % 4 === 0 ? 44 : 24;
+    rulerDraw.beginPath();
+    rulerDraw.moveTo(x, 14);
+    rulerDraw.lineTo(x, 14 + h);
+    rulerDraw.stroke();
+  }
+  const rulerMap = new THREE.CanvasTexture(rulerCanvas);
+  rulerMap.colorSpace = THREE.SRGBColorSpace;
+  const rulerSide = new THREE.MeshStandardMaterial({ color: 0xd8c49a, roughness: 0.7 });
+  const ruler = new THREE.Mesh(
+    new THREE.BoxGeometry(3.2, 0.03, 0.24),
+    [rulerSide, rulerSide, new THREE.MeshStandardMaterial({ map: rulerMap, roughness: 0.62 }), rulerSide, rulerSide, rulerSide]
+  );
+  ruler.position.set(0.15, -1.12, 0.02);
+  ruler.castShadow = true;
+  workshop.add(ruler);
+
+  const canMat = new THREE.MeshStandardMaterial({ color: 0xc23b2e, roughness: 0.5, metalness: 0.08 });
+  const canRimMat = new THREE.MeshStandardMaterial({ color: 0xd9d3c8, roughness: 0.32, metalness: 0.45 });
+  const can = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.46, 24), canMat);
+  can.position.set(-1.55, -0.91, 0.35);
+  can.castShadow = true;
+  workshop.add(can);
+  const canRim = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.035, 24), canRimMat);
+  canRim.position.set(-1.55, -0.67, 0.35);
+  workshop.add(canRim);
+  const pencil = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.028, 0.028, 0.95, 8),
+    new THREE.MeshStandardMaterial({ color: 0xe2b84a, roughness: 0.62 })
+  );
+  pencil.rotation.z = Math.PI / 2;
+  pencil.rotation.y = 0.35;
+  pencil.position.set(-1.05, -1.1, 0.95);
+  pencil.castShadow = true;
+  workshop.add(pencil);
 
   function makeFace(w, h, kind, seed, mirrorKnots, style, knots) {
     const wood = kind === "end"
