@@ -468,7 +468,7 @@
   const TOOLS = [
     { id: "brush", name: "Brush", cost: 0, blurb: "The everyday brush." },
     { id: "remover", name: "Remover", cost: 20, blurb: "Lifts paint. Scorch stays." },
-    { id: "marker", name: "Marker", cost: 30, blurb: "Thin, and it reaches the opacity limit fast." },
+    { id: "marker", name: "Marker", cost: 30, blurb: "Thin, and always solid. The opacity slider does not change it." },
     { id: "airbrush", name: "Airbrush", cost: 50, blurb: "A wide, soft coat. Good for stain." },
     { id: "burner", name: "Burner", cost: 80, blurb: "Scorches the wood. The remover cannot lift it." }
   ];
@@ -806,6 +806,7 @@
   let sales = 0;
   let money = 0;
   let maxParts = 8;
+  let maxBrush = 72;
   let brownOwned = false;
   let tool = "brush";
   let ownedTools = { brush: true, remover: false, marker: false, airbrush: false, burner: false };
@@ -837,6 +838,7 @@
       if (typeof data.money === "number") money = Math.max(0, Math.round(data.money));
       if (typeof data.sales === "number") sales = Math.max(0, Math.round(data.sales));
       if (data.maxParts === 12) maxParts = 12;
+      if (data.maxBrush === 120) maxBrush = 120;
       brownOwned = !!data.brownOwned;
       if (data.ownedTools) ownedTools = Object.assign(ownedTools, data.ownedTools);
       ownedTools.brush = true;
@@ -863,7 +865,7 @@
   function persist() {
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        money, sales, maxParts, brownOwned, ownedTools, tool, unlocked, saves, shelf,
+        money, sales, maxParts, maxBrush, brownOwned, ownedTools, tool, unlocked, saves, shelf,
         contract, holdingContract: onContract
       }));
     } catch (err) { /* private mode */ }
@@ -1264,7 +1266,13 @@
     return choices[Math.floor(Math.random() * choices.length)];
   }
 
+  function applyBrushMax() {
+    sizeInput.max = String(maxBrush);
+    if (Number(sizeInput.value) > maxBrush) sizeInput.value = String(maxBrush);
+  }
+
   loadProgress();
+  applyBrushMax();
   if (sales === 0) {
     contract = null;
     onContract = false;
@@ -1699,6 +1707,7 @@
     shopEl.replaceChildren();
     if (!brownOwned) shopEl.appendChild(shopButton("Brown can $15", 15, buyBrown));
     if (maxParts < 12) shopEl.appendChild(shopButton("Deeper well $25", 25, buyWell));
+    if (maxBrush < 120) shopEl.appendChild(shopButton("Bigger brush $30", 30, buyBrushSize));
     if (!shopEl.childElementCount) {
       const done = document.createElement("p");
       done.className = "mixer-help";
@@ -1727,6 +1736,7 @@
     updateMoney();
     applyBrush();
     updateCursorSize();
+    syncOpacityControl();
     persist();
     statusEl.textContent = "Bought the " + item.name.toLowerCase() + ".";
   }
@@ -1736,6 +1746,7 @@
     renderTools();
     applyBrush();
     updateCursorSize();
+    syncOpacityControl();
     persist();
   }
 
@@ -1765,6 +1776,30 @@
     refreshMixerReadout();
     persist();
     statusEl.textContent = "The well holds 12 pours now.";
+  }
+
+  function buyBrushSize() {
+    if (maxBrush >= 120) return;
+    if (money < 30) {
+      statusEl.textContent = "A bigger brush costs $30.";
+      return;
+    }
+    money -= 30;
+    maxBrush = 120;
+    applyBrushMax();
+    updateMoney();
+    updateCursorSize();
+    persist();
+    statusEl.textContent = "The size slider now goes up to 120.";
+  }
+
+  function syncOpacityControl() {
+    const solid = tool === "marker";
+    opacityInput.disabled = solid;
+    opacityInput.title = solid
+      ? "The marker is always solid."
+      : "How solid the paint can get. Go over a spot to build toward this.";
+    opacityVal.textContent = solid ? "100%" : opacityInput.value + "%";
   }
 
   function toolRadius() {
@@ -1851,9 +1886,8 @@
   renderShelf();
   drawWell();
   updateCursorSize();
-  opacityInput.addEventListener("input", () => {
-    opacityVal.textContent = opacityInput.value + "%";
-  });
+  opacityInput.addEventListener("input", syncOpacityControl);
+  syncOpacityControl();
 
   function updateCoverage() {
     const ratio = painted / TOTAL;
@@ -1908,7 +1942,7 @@
   function stamp(face, cx, cy) {
     const r = toolRadius();
     const r2 = r * r;
-    const maxA = Math.round((Number(opacityInput.value) / 100) * 255);
+    const maxA = tool === "marker" ? 255 : Math.round((Number(opacityInput.value) / 100) * 255);
     const x0 = Math.max(0, Math.floor(cx - r));
     const x1 = Math.min(face.w - 1, Math.ceil(cx + r));
     const y0 = Math.max(0, Math.floor(cy - r));
@@ -1940,7 +1974,7 @@
           paintDeposit(face.pixels, i, Math.max(1, Math.round(14 * fall)), brushR, brushG, brushB, maxA);
           coverPixel(face, i);
         } else if (tool === "marker") {
-          paintDeposit(face.pixels, i, 72, brushR, brushG, brushB, maxA);
+          paintDeposit(face.pixels, i, 255, brushR, brushG, brushB, maxA);
           coverPixel(face, i);
         } else {
           paintDeposit(face.pixels, i, DEPOSIT, brushR, brushG, brushB, maxA);
