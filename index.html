@@ -44,6 +44,7 @@
     letter-spacing: 0.01em;
   }
   .group { display: flex; align-items: center; gap: 8px; }
+  #opacity-val { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 36px; }
   label { font-size: 13px; }
   input[type="color"] {
     -webkit-appearance: none;
@@ -158,6 +159,11 @@
     <label for="size">Brush</label>
     <input id="size" type="range" min="18" max="72" value="42">
   </div>
+  <div class="group">
+    <label for="opacity">Opacity</label>
+    <input id="opacity" type="range" min="12" max="100" value="60" title="How solid the paint can get. Go over a spot to build toward this.">
+    <span id="opacity-val">60%</span>
+  </div>
   <div class="coverage">
     <div class="row"><span>Coverage</span><span id="pct">0.0%</span></div>
     <div class="track-wrap">
@@ -166,7 +172,7 @@
     </div>
   </div>
   <button id="clear" class="clear" type="button">Clear</button>
-  <p id="status" role="status">Drag on the wood to paint. Right-drag to turn the plank. Scroll to zoom. Cover 99% of every side.</p>
+  <p id="status" role="status">Drag to paint. Go over a spot to build it up. Right-drag to turn. Scroll to zoom. Cover 99% of every side.</p>
 </header>
 <div id="banner" hidden>
   <h2>Fully painted</h2>
@@ -183,7 +189,7 @@
   const BOARD_D = FACE_D / PX;
   const THICK = FACE_T / PX;
   const GOAL = 0.99;
-  const PAINT_ALPHA = 0.42;
+  const DEPOSIT = 28;
   const PRESETS = [
     ["#c23b2e", "Red"],
     ["#e1a025", "Yellow"],
@@ -195,6 +201,8 @@
 
   const view = document.getElementById("view");
   const colorInput = document.getElementById("color");
+  const opacityInput = document.getElementById("opacity");
+  const opacityVal = document.getElementById("opacity-val");
   const sizeInput = document.getElementById("size");
   const pctEl = document.getElementById("pct");
   const fillEl = document.getElementById("fill");
@@ -363,25 +371,32 @@
     const paint = document.createElement("canvas");
     paint.width = w;
     paint.height = h;
+    const pixels = new Uint8ClampedArray(w * h * 4);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
-    return { w, h, wood, paint, paintCtx: paint.getContext("2d"), ctx, texture, mask: new Uint8Array(w * h) };
+    return {
+      w, h, wood, paint,
+      paintCtx: paint.getContext("2d"),
+      pixels,
+      image: new ImageData(pixels, w, h),
+      ctx, texture,
+      mask: new Uint8Array(w * h)
+    };
   });
   const TOTAL = faces.reduce((sum, face) => sum + face.w * face.h, 0);
   let painted = 0;
   let won = false;
 
   function compositeFace(face) {
+    face.paintCtx.putImageData(face.image, 0, 0);
     face.ctx.globalAlpha = 1;
     face.ctx.drawImage(face.wood, 0, 0);
-    face.ctx.globalAlpha = PAINT_ALPHA;
     face.ctx.drawImage(face.paint, 0, 0);
-    face.ctx.globalAlpha = 1;
     face.texture.needsUpdate = true;
   }
 
   function redrawFace(face) {
-    face.paintCtx.clearRect(0, 0, face.w, face.h);
+    face.pixels.fill(0);
     face.mask.fill(0);
     compositeFace(face);
   }
@@ -502,7 +517,7 @@
   let last = null;
   let rotX = 0;
   let rotY = 0;
-  const HINT = "Drag on the wood to paint. Right-drag to turn the plank. Scroll to zoom. Cover 99% of every side.";
+  const HINT = "Drag to paint. Go over a spot to build it up. Right-drag to turn. Scroll to zoom. Cover 99% of every side.";
 
   function brushRadiusPx() {
     return Number(sizeInput.value);
@@ -545,6 +560,9 @@
   });
   applyColor();
   updateCursorSize();
+  opacityInput.addEventListener("input", () => {
+    opacityVal.textContent = opacityInput.value + "%";
+  });
 
   function updateCoverage() {
     const ratio = painted / TOTAL;
@@ -561,11 +579,12 @@
   function stamp(face, cx, cy) {
     const r = brushRadiusPx();
     const r2 = r * r;
-    face.paintCtx.fillStyle = colorInput.value;
-    face.paintCtx.beginPath();
-    face.paintCtx.arc(cx, cy, r, 0, Math.PI * 2);
-    face.paintCtx.fill();
-
+    const maxA = Math.round((Number(opacityInput.value) / 100) * 255);
+    const hex = Number.parseInt(colorInput.value.slice(1), 16);
+    const nr = (hex >> 16) & 255;
+    const ng = (hex >> 8) & 255;
+    const nb = hex & 255;
+    const pix = face.pixels;
     const x0 = Math.max(0, Math.floor(cx - r));
     const x1 = Math.min(face.w - 1, Math.ceil(cx + r));
     const y0 = Math.max(0, Math.floor(cy - r));
@@ -576,12 +595,21 @@
       const row = y * face.w;
       for (let x = x0; x <= x1; x++) {
         const dx = x + 0.5 - cx;
-        if (dx * dx + dy2 <= r2) {
-          const i = row + x;
-          if (face.mask[i] === 0) {
-            face.mask[i] = 1;
-            painted++;
-          }
+        if (dx * dx + dy2 > r2) continue;
+        const i = row + x;
+        const o = i * 4;
+        const oldA = pix[o + 3];
+        const keep = Math.round(oldA * (255 - DEPOSIT) / 255);
+        const rawA = DEPOSIT + keep;
+        if (rawA > 0) {
+          pix[o] = Math.round((nr * DEPOSIT + pix[o] * keep) / rawA);
+          pix[o + 1] = Math.round((ng * DEPOSIT + pix[o + 1] * keep) / rawA);
+          pix[o + 2] = Math.round((nb * DEPOSIT + pix[o + 2] * keep) / rawA);
+        }
+        pix[o + 3] = rawA > maxA ? maxA : rawA;
+        if (face.mask[i] === 0) {
+          face.mask[i] = 1;
+          painted++;
         }
       }
     }
