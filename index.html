@@ -95,11 +95,11 @@
   }
   .goal {
     position: absolute;
-    left: 99%;
+    left: 100%;
     top: -3px;
     width: 2px;
     height: 18px;
-    background: #f6ead8;
+    background: transparent;
     transform: translateX(-1px);
   }
   button.clear {
@@ -112,6 +112,8 @@
     cursor: pointer;
   }
   button.clear:hover { background: rgba(246, 234, 216, 0.08); }
+  button.clear:disabled { opacity: 0.4; cursor: default; }
+  #money { font-variant-numeric: tabular-nums; min-width: 42px; }
   #status {
     flex-basis: 100%;
     margin: 0;
@@ -143,6 +145,10 @@
     font-family: "Segoe UI", sans-serif;
     font-size: 14px;
   }
+  #banner button {
+    pointer-events: auto;
+    margin-top: 12px;
+  }
   #banner[hidden] { display: none; }
 </style>
 </head>
@@ -168,15 +174,18 @@
     <div class="row"><span>Coverage</span><span id="pct">0.0%</span></div>
     <div class="track-wrap">
       <div class="track"><div id="fill"></div></div>
-      <div class="goal" title="99%"></div>
+      <div class="goal" title="100%"></div>
     </div>
   </div>
+  <span id="money">$0</span>
+  <button id="sell" class="clear" type="button" disabled>Sell for $10</button>
   <button id="clear" class="clear" type="button">Clear</button>
-  <p id="status" role="status">Drag to paint. Go over a spot to build it up. Right-drag to turn. Scroll to zoom. Cover 99% of every side.</p>
+  <p id="status" role="status">Drag to paint. Go over a spot to build it up. Right-drag to turn. Scroll to zoom. Cover 100% of every side.</p>
 </header>
 <div id="banner" hidden>
-  <h2>Fully painted</h2>
-  <p>99% of the plank is covered.</p>
+  <h2>Ready to sell</h2>
+  <p>The plank is painted.</p>
+  <button id="sell-banner" class="clear" type="button">Sell for $10</button>
 </div>
 <script src="three.min.js"></script>
 <script>
@@ -189,6 +198,7 @@
   const BOARD_D = FACE_D / PX;
   const THICK = FACE_T / PX;
   const GOAL = 0.99;
+  const PRICE = 10;
   const DEPOSIT = 28;
   const PRESETS = [
     ["#c23b2e", "Red"],
@@ -225,25 +235,40 @@
     };
   }
 
-  function drawKnot(g, x, y, r) {
+  function drawKnot(g, x, y, r, spin) {
+    const tilt = -0.4 * spin;
     const shade = g.createRadialGradient(x, y, r * 0.1, x, y, r * 1.6);
     shade.addColorStop(0, "rgba(48, 26, 12, 0.9)");
     shade.addColorStop(0.4, "rgba(92, 52, 24, 0.5)");
     shade.addColorStop(1, "rgba(92, 52, 24, 0)");
     g.fillStyle = shade;
     g.beginPath();
-    g.ellipse(x, y, r * 1.35, r, -0.4, 0, Math.PI * 2);
+    g.ellipse(x, y, r * 1.35, r, tilt, 0, Math.PI * 2);
     g.fill();
     g.strokeStyle = "rgba(42, 22, 10, 0.4)";
     g.lineWidth = 1;
     for (let i = 1; i <= 5; i++) {
       g.beginPath();
-      g.ellipse(x, y, r * 0.26 * i, r * 0.19 * i, -0.4, 0, Math.PI * 2);
+      g.ellipse(x, y, r * 0.26 * i, r * 0.19 * i, tilt, 0, Math.PI * 2);
       g.stroke();
     }
   }
 
-  function buildWood(w, h, seed, knots) {
+  // One knot layout for the board. Bottom uses the mirrored row so each knot
+  // passes through to the other face.
+  const BOARD_KNOTS = [
+    { nx: 0.31, nz: 0.62, scale: 0.09 },
+    { nx: 0.74, nz: 0.34, scale: 0.06 }
+  ];
+
+  function drawBoardKnots(g, w, h, mirror) {
+    for (const knot of BOARD_KNOTS) {
+      const nz = mirror ? 1 - knot.nz : knot.nz;
+      drawKnot(g, knot.nx * w, nz * h, h * knot.scale, mirror ? -1 : 1);
+    }
+  }
+
+  function buildWood(w, h, seed, mirrorKnots) {
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
@@ -295,10 +320,7 @@
       g.fillRect(rand() * w, rand() * h, 1 + rand() * 7, 1);
     }
 
-    if (knots) {
-      drawKnot(g, w * (0.28 + rand() * 0.08), h * (0.55 + rand() * 0.1), h * 0.09);
-      drawKnot(g, w * (0.68 + rand() * 0.08), h * (0.3 + rand() * 0.1), h * 0.06);
-    }
+    if (mirrorKnots != null) drawBoardKnots(g, w, h, mirrorKnots);
 
     const rim = g.createLinearGradient(0, 0, 0, h);
     rim.addColorStop(0, "rgba(40, 22, 10, 0.35)");
@@ -353,16 +375,16 @@
 
   // BoxGeometry material order: +X, -X, +Y, -Y, +Z, -Z.
   const FACE_LAYOUT = [
-    [FACE_D, FACE_T, "end", 3],
-    [FACE_D, FACE_T, "end", 7],
-    [FACE_W, FACE_D, "board", 19],
-    [FACE_W, FACE_D, "board", 23],
-    [FACE_W, FACE_T, "edge", 11],
-    [FACE_W, FACE_T, "edge", 13]
+    [FACE_D, FACE_T, "end", 3, null],
+    [FACE_D, FACE_T, "end", 7, null],
+    [FACE_W, FACE_D, "board", 19, false],
+    [FACE_W, FACE_D, "board", 23, true],
+    [FACE_W, FACE_T, "edge", 11, null],
+    [FACE_W, FACE_T, "edge", 13, null]
   ];
 
-  const faces = FACE_LAYOUT.map(([w, h, kind, seed]) => {
-    const wood = kind === "end" ? buildEnd(w, h, seed) : buildWood(w, h, seed, kind === "board");
+  const faces = FACE_LAYOUT.map(([w, h, kind, seed, mirrorKnots]) => {
+    const wood = kind === "end" ? buildEnd(w, h, seed) : buildWood(w, h, seed, kind === "board" ? mirrorKnots : null);
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
@@ -517,7 +539,8 @@
   let last = null;
   let rotX = 0;
   let rotY = 0;
-  const HINT = "Drag to paint. Go over a spot to build it up. Right-drag to turn. Scroll to zoom. Cover 99% of every side.";
+  const HINT = "Drag to paint. Go over a spot to build it up. Right-drag to turn. Scroll to zoom. Cover 100% of every side.";
+  let money = 0;
 
   function brushRadiusPx() {
     return Number(sizeInput.value);
@@ -571,8 +594,9 @@
     fillEl.style.width = pct + "%";
     if (!won && ratio >= GOAL) {
       won = true;
+      document.getElementById("sell").disabled = false;
       bannerEl.hidden = false;
-      statusEl.textContent = "Fully painted.";
+      statusEl.textContent = "Ready to sell.";
     }
   }
 
@@ -740,14 +764,29 @@
   colorInput.addEventListener("input", applyColor);
   sizeInput.addEventListener("input", updateCursorSize);
 
-  document.getElementById("clear").addEventListener("click", () => {
+  function resetPlank() {
     painted = 0;
     won = false;
+    document.getElementById("sell").disabled = true;
     bannerEl.hidden = true;
-    statusEl.textContent = HINT;
     faces.forEach(redrawFace);
     updateCoverage();
+  }
+
+  function sellPlank() {
+    if (!won) return;
+    money += PRICE;
+    document.getElementById("money").textContent = "$" + money;
+    resetPlank();
+    statusEl.textContent = "Sold for $" + PRICE + ".";
+  }
+
+  document.getElementById("clear").addEventListener("click", () => {
+    resetPlank();
+    statusEl.textContent = HINT;
   });
+  document.getElementById("sell").addEventListener("click", sellPlank);
+  document.getElementById("sell-banner").addEventListener("click", sellPlank);
 
   function resize() {
     const w = window.innerWidth;
