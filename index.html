@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paint the Wood</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #221c18;
+    overflow: hidden;
+    user-select: none;
+  }
+  #view {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    cursor: grab;
+  }
+  #hud {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    z-index: 2;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 18px;
+    padding: 10px 14px;
+    background: rgba(28, 20, 16, 0.88);
+    border: 1px solid rgba(232, 196, 150, 0.22);
+    border-radius: 12px;
+    color: #f6ead8;
+    font-family: "Segoe UI", sans-serif;
+  }
+  h1 {
+    margin: 0;
+    font-family: Georgia, "Palatino Linotype", serif;
+    font-size: 22px;
+    font-weight: normal;
+    letter-spacing: 0.01em;
+  }
+  .group { display: flex; align-items: center; gap: 8px; }
+  label { font-size: 13px; }
+  input[type="color"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 42px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid rgba(246, 234, 216, 0.45);
+    background: none;
+    cursor: pointer;
+  }
+  input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+  input[type="color"]::-webkit-color-swatch { border: none; }
+  input[type="range"] { width: 120px; accent-color: #e0a15a; }
+  .swatches { display: flex; gap: 6px; }
+  .swatches button {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.28);
+    cursor: pointer;
+  }
+  .swatches button[aria-pressed="true"] {
+    outline: 2px solid #f6ead8;
+    outline-offset: 1px;
+  }
+  .coverage { width: 240px; }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  #pct { font-variant-numeric: tabular-nums; }
+  .track-wrap { position: relative; }
+  .track {
+    height: 12px;
+    background: #2c241e;
+    border-radius: 99px;
+    overflow: hidden;
+  }
+  #fill {
+    height: 100%;
+    width: 0%;
+    background: #c23b2e;
+    border-radius: 99px;
+  }
+  .goal {
+    position: absolute;
+    left: 99%;
+    top: -3px;
+    width: 2px;
+    height: 18px;
+    background: #f6ead8;
+    transform: translateX(-1px);
+  }
+  button.clear {
+    background: transparent;
+    color: #f6ead8;
+    border: 1px solid rgba(246, 234, 216, 0.4);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font: 13px "Segoe UI", sans-serif;
+    cursor: pointer;
+  }
+  button.clear:hover { background: rgba(246, 234, 216, 0.08); }
+  #status {
+    flex-basis: 100%;
+    margin: 0;
+    font-size: 12px;
+    opacity: 0.8;
+  }
+  #banner {
+    position: fixed;
+    z-index: 3;
+    top: 46%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 16px 28px 18px;
+    text-align: center;
+    color: #f6ead8;
+    background: rgba(28, 20, 16, 0.92);
+    border: 1px solid rgba(240, 210, 160, 0.45);
+    border-radius: 12px;
+    pointer-events: none;
+  }
+  #banner h2 {
+    margin: 0;
+    font-family: Georgia, "Palatino Linotype", serif;
+    font-size: 32px;
+    font-weight: normal;
+  }
+  #banner p {
+    margin: 6px 0 0;
+    font-family: "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+  #banner[hidden] { display: none; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<header id="hud">
+  <h1>Paint the Wood</h1>
+  <div class="group">
+    <label for="color">Color</label>
+    <input id="color" type="color" value="#c23b2e">
+    <div class="swatches" id="swatches"></div>
+  </div>
+  <div class="group">
+    <label for="size">Brush</label>
+    <input id="size" type="range" min="18" max="72" value="42">
+  </div>
+  <div class="coverage">
+    <div class="row"><span>Coverage</span><span id="pct">0.0%</span></div>
+    <div class="track-wrap">
+      <div class="track"><div id="fill"></div></div>
+      <div class="goal" title="99%"></div>
+    </div>
+  </div>
+  <button id="clear" class="clear" type="button">Clear</button>
+  <p id="status" role="status">Drag on the wood to paint. Right-drag to turn the plank. Scroll to zoom. Cover 99% of every side.</p>
+</header>
+<div id="banner" hidden>
+  <h2>Fully painted</h2>
+  <p>99% of the plank is covered.</p>
+</div>
+<script src="three.min.js"></script>
+<script>
+(() => {
+  const PX = 320;
+  const FACE_W = 1024;
+  const FACE_D = 512;
+  const FACE_T = 80;
+  const BOARD_W = FACE_W / PX;
+  const BOARD_D = FACE_D / PX;
+  const THICK = FACE_T / PX;
+  const GOAL = 0.99;
+  const PAINT_ALPHA = 0.42;
+  const PRESETS = [
+    ["#c23b2e", "Red"],
+    ["#e1a025", "Yellow"],
+    ["#2f6f4e", "Green"],
+    ["#2c4e86", "Blue"],
+    ["#f4f1ea", "White"],
+    ["#1c1a17", "Black"]
+  ];
+
+  const view = document.getElementById("view");
+  const colorInput = document.getElementById("color");
+  const sizeInput = document.getElementById("size");
+  const pctEl = document.getElementById("pct");
+  const fillEl = document.getElementById("fill");
+  const statusEl = document.getElementById("status");
+  const bannerEl = document.getElementById("banner");
+  const swatchesEl = document.getElementById("swatches");
+
+  if (!window.THREE) {
+    statusEl.textContent = "Could not load the 3D engine.";
+    return;
+  }
+
+  const THREE = window.THREE;
+
+  function makeRng(seed) {
+    let s = seed >>> 0;
+    return () => {
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+      return s / 4294967296;
+    };
+  }
+
+  function drawKnot(g, x, y, r) {
+    const shade = g.createRadialGradient(x, y, r * 0.1, x, y, r * 1.6);
+    shade.addColorStop(0, "rgba(48, 26, 12, 0.9)");
+    shade.addColorStop(0.4, "rgba(92, 52, 24, 0.5)");
+    shade.addColorStop(1, "rgba(92, 52, 24, 0)");
+    g.fillStyle = shade;
+    g.beginPath();
+    g.ellipse(x, y, r * 1.35, r, -0.4, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = "rgba(42, 22, 10, 0.4)";
+    g.lineWidth = 1;
+    for (let i = 1; i <= 5; i++) {
+      g.beginPath();
+      g.ellipse(x, y, r * 0.26 * i, r * 0.19 * i, -0.4, 0, Math.PI * 2);
+      g.stroke();
+    }
+  }
+
+  function buildWood(w, h, seed, knots) {
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const g = canvas.getContext("2d");
+    const rand = makeRng(seed);
+
+    const base = g.createLinearGradient(0, 0, 0, h);
+    base.addColorStop(0, "#c49262");
+    base.addColorStop(0.2, "#a56b3e");
+    base.addColorStop(0.48, "#c48952");
+    base.addColorStop(0.74, "#8a552f");
+    base.addColorStop(1, "#b47a45");
+    g.fillStyle = base;
+    g.fillRect(0, 0, w, h);
+
+    const bands = Math.max(4, Math.round(h / 32));
+    for (let i = 0; i < bands; i++) {
+      const y = rand() * h;
+      const band = 4 + rand() * Math.max(6, h * 0.05);
+      const tone = rand() > 0.5 ? "90, 48, 22" : "170, 120, 70";
+      g.fillStyle = `rgba(${tone}, ${0.05 + rand() * 0.08})`;
+      g.fillRect(0, y, w, band);
+    }
+
+    const lines = Math.max(8, Math.round(h / 4.6));
+    for (let i = 0; i < lines; i++) {
+      const y0 = ((i + 0.5) / lines) * h;
+      const amp = 2 + rand() * Math.max(3, h * 0.018);
+      const freq = 0.004 + rand() * 0.012;
+      const phase = rand() * Math.PI * 2;
+      g.strokeStyle = rand() > 0.45
+        ? `rgba(70, 36, 16, ${0.08 + rand() * 0.2})`
+        : `rgba(236, 206, 160, ${0.04 + rand() * 0.1})`;
+      g.lineWidth = 1 + rand() * 2.2;
+      g.beginPath();
+      for (let x = 0; x <= w; x += 8) {
+        const y = y0
+          + Math.sin(x * freq + phase) * amp
+          + Math.sin(x * 0.021 + i * 0.7) * Math.min(2.2, h * 0.02);
+        if (x === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+
+    const pores = Math.min(1800, Math.round((w * h) / 330));
+    for (let i = 0; i < pores; i++) {
+      g.fillStyle = rand() > 0.5 ? "rgba(255,255,255,0.035)" : "rgba(40,20,8,0.07)";
+      g.fillRect(rand() * w, rand() * h, 1 + rand() * 7, 1);
+    }
+
+    if (knots) {
+      drawKnot(g, w * (0.28 + rand() * 0.08), h * (0.55 + rand() * 0.1), h * 0.09);
+      drawKnot(g, w * (0.68 + rand() * 0.08), h * (0.3 + rand() * 0.1), h * 0.06);
+    }
+
+    const rim = g.createLinearGradient(0, 0, 0, h);
+    rim.addColorStop(0, "rgba(40, 22, 10, 0.35)");
+    rim.addColorStop(0.08, "rgba(40, 22, 10, 0)");
+    rim.addColorStop(0.92, "rgba(40, 22, 10, 0)");
+    rim.addColorStop(1, "rgba(40, 22, 10, 0.35)");
+    g.fillStyle = rim;
+    g.fillRect(0, 0, w, h);
+
+    const ends = g.createLinearGradient(0, 0, w, 0);
+    ends.addColorStop(0, "rgba(40, 22, 10, 0.28)");
+    ends.addColorStop(0.035, "rgba(40, 22, 10, 0)");
+    ends.addColorStop(0.965, "rgba(40, 22, 10, 0)");
+    ends.addColorStop(1, "rgba(40, 22, 10, 0.28)");
+    g.fillStyle = ends;
+    g.fillRect(0, 0, w, h);
+    return canvas;
+  }
+
+  function buildEnd(w, h, seed) {
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const g = canvas.getContext("2d");
+    const rand = makeRng(seed);
+    const base = g.createLinearGradient(0, 0, 0, h);
+    base.addColorStop(0, "#b88858");
+    base.addColorStop(0.5, "#8d5a32");
+    base.addColorStop(1, "#c09260");
+    g.fillStyle = base;
+    g.fillRect(0, 0, w, h);
+    const cx = w * (0.46 + rand() * 0.08);
+    const cy = h * (0.5 + (rand() - 0.5) * 0.08);
+    for (let i = 1; i <= 9; i++) {
+      g.strokeStyle = i % 2 ? "rgba(62, 32, 14, 0.55)" : "rgba(214, 168, 112, 0.4)";
+      g.lineWidth = Math.max(1, h * 0.035);
+      g.beginPath();
+      g.ellipse(cx, cy, w * 0.055 * i, h * 0.055 * i, rand() * 0.4, 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.strokeStyle = "rgba(50, 26, 12, 0.35)";
+    g.lineWidth = 1;
+    for (let i = 0; i < 7; i++) {
+      const a = rand() * Math.PI;
+      g.beginPath();
+      g.moveTo(cx, cy);
+      g.lineTo(cx + Math.cos(a) * w * 0.48, cy + Math.sin(a) * h * 0.48);
+      g.stroke();
+    }
+    return canvas;
+  }
+
+  // BoxGeometry material order: +X, -X, +Y, -Y, +Z, -Z.
+  const FACE_LAYOUT = [
+    [FACE_D, FACE_T, "end", 3],
+    [FACE_D, FACE_T, "end", 7],
+    [FACE_W, FACE_D, "board", 19],
+    [FACE_W, FACE_D, "board", 23],
+    [FACE_W, FACE_T, "edge", 11],
+    [FACE_W, FACE_T, "edge", 13]
+  ];
+
+  const faces = FACE_LAYOUT.map(([w, h, kind, seed]) => {
+    const wood = kind === "end" ? buildEnd(w, h, seed) : buildWood(w, h, seed, kind === "board");
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(wood, 0, 0);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return { w, h, wood, ctx, texture, mask: new Uint8Array(w * h) };
+  });
+  const TOTAL = faces.reduce((sum, face) => sum + face.w * face.h, 0);
+  let painted = 0;
+  let won = false;
+
+  function redrawFace(face) {
+    face.ctx.clearRect(0, 0, face.w, face.h);
+    face.ctx.drawImage(face.wood, 0, 0);
+    face.mask.fill(0);
+    face.texture.needsUpdate = true;
+  }
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x221c18);
+  scene.fog = new THREE.Fog(0x221c18, 12, 24);
+
+  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50);
+  const lookTarget = new THREE.Vector3(0, 0.22, 0);
+  camera.position.set(2.2, 1.95, 4.7);
+  camera.lookAt(lookTarget);
+
+  const renderer = new THREE.WebGLRenderer({ canvas: view, antialias: true });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  faces.forEach((face) => { face.texture.anisotropy = maxAniso; });
+
+  const hemi = new THREE.HemisphereLight(0xfff4e8, 0x6b5344, 0.9);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xfff7ee, 1.45);
+  sun.position.set(-1.8, 3.6, 2.2);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.bias = -0.00035;
+  const shadowCam = sun.shadow.camera;
+  shadowCam.left = -4;
+  shadowCam.right = 4;
+  shadowCam.top = 4;
+  shadowCam.bottom = -4;
+  shadowCam.near = 0.4;
+  shadowCam.far = 14;
+  scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xffe6cc, 0.45);
+  fill.position.set(2.4, 1.2, -2.2);
+  scene.add(fill);
+
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(14, 48),
+    new THREE.MeshStandardMaterial({ color: 0x171310, roughness: 1 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -1.7;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const plank = new THREE.Mesh(
+    new THREE.BoxGeometry(BOARD_W, THICK, BOARD_D),
+    faces.map((face) => new THREE.MeshStandardMaterial({
+      map: face.texture,
+      roughness: 0.82,
+      metalness: 0
+    }))
+  );
+  plank.rotation.set(0.95, -0.78, 0.18);
+  plank.castShadow = true;
+  plank.receiveShadow = true;
+  scene.add(plank);
+
+  const paintColor = new THREE.Color(colorInput.value);
+  const bristleMat = new THREE.MeshStandardMaterial({ color: paintColor, roughness: 0.55 });
+  const ferruleMat = new THREE.MeshStandardMaterial({ color: 0xc5bfb4, roughness: 0.32, metalness: 0.75 });
+  const handleMat = new THREE.MeshStandardMaterial({ color: 0x8a5a32, roughness: 0.48 });
+  const bristles = new THREE.Group();
+  for (let i = -3; i <= 3; i++) {
+    const strand = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.12, 0.026), bristleMat);
+    strand.position.set(i * 0.028, 0.06, 0);
+    strand.rotation.z = -i * 0.045;
+    bristles.add(strand);
+  }
+  const ferrule = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.034, 0.08, 12), ferruleMat);
+  ferrule.position.y = 0.15;
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.018, 0.62, 12), handleMat);
+  handle.position.y = 0.48;
+  const tilt = new THREE.Group();
+  tilt.position.y = 0.012;
+  tilt.rotation.x = 0.45;
+  tilt.rotation.z = -1.12;
+  tilt.add(bristles, ferrule, handle);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: paintColor,
+    transparent: true,
+    opacity: 0.95,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
+  const ringOutlineMat = new THREE.MeshBasicMaterial({
+    color: 0x1a120e,
+    transparent: true,
+    opacity: 0.9,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
+  const ringPivot = new THREE.Group();
+  ringPivot.rotation.x = -Math.PI / 2;
+  ringPivot.position.y = 0.008;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 48), ringMat);
+  const ringOutline = new THREE.Mesh(new THREE.RingGeometry(1.03, 1.16, 48), ringOutlineMat);
+  ringPivot.add(ring, ringOutline);
+  const cursor = new THREE.Group();
+  cursor.add(ringPivot, tilt);
+  cursor.visible = false;
+  scene.add(cursor);
+
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  const Y_AXIS = new THREE.Vector3(0, 1, 0);
+  const X_AXIS = new THREE.Vector3(1, 0, 0);
+  const _normal = new THREE.Vector3();
+  const _localX = new THREE.Vector3();
+  const _camRight = new THREE.Vector3();
+  const _tmp = new THREE.Vector3();
+  let mode = null;
+  let last = null;
+  let rotX = 0;
+  let rotY = 0;
+  const HINT = "Drag on the wood to paint. Right-drag to turn the plank. Scroll to zoom. Cover 99% of every side.";
+
+  function brushRadiusPx() {
+    return Number(sizeInput.value);
+  }
+
+  function updateCursorSize() {
+    const world = brushRadiusPx() / PX;
+    ringPivot.scale.setScalar(world);
+    const spread = world / 0.11;
+    bristles.scale.set(spread, 1, 1);
+    ferrule.scale.set(Math.max(0.85, Math.min(spread, 1.7)), 1, 1);
+  }
+
+  function syncSwatches() {
+    const current = colorInput.value.toLowerCase();
+    swatchesEl.querySelectorAll("button").forEach((btn) => {
+      btn.setAttribute("aria-pressed", btn.dataset.color === current ? "true" : "false");
+    });
+  }
+
+  function applyColor() {
+    paintColor.set(colorInput.value);
+    bristleMat.color.copy(paintColor);
+    ringMat.color.copy(paintColor);
+    fillEl.style.background = colorInput.value;
+    syncSwatches();
+  }
+
+  PRESETS.forEach(([hex, name]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.color = hex;
+    btn.style.background = hex;
+    btn.setAttribute("aria-label", name);
+    btn.addEventListener("click", () => {
+      colorInput.value = hex;
+      applyColor();
+    });
+    swatchesEl.appendChild(btn);
+  });
+  applyColor();
+  updateCursorSize();
+
+  function updateCoverage() {
+    const ratio = painted / TOTAL;
+    const pct = Math.min(100, ratio * 100);
+    pctEl.textContent = pct.toFixed(1) + "%";
+    fillEl.style.width = pct + "%";
+    if (!won && ratio >= GOAL) {
+      won = true;
+      bannerEl.hidden = false;
+      statusEl.textContent = "Fully painted.";
+    }
+  }
+
+  function paintRgba() {
+    const hex = colorInput.value;
+    const n = Number.parseInt(hex.slice(1), 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r}, ${g}, ${b}, ${PAINT_ALPHA})`;
+  }
+
+  function stamp(face, cx, cy) {
+    const r = brushRadiusPx();
+    const r2 = r * r;
+    face.ctx.fillStyle = paintRgba();
+    face.ctx.beginPath();
+    face.ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    face.ctx.fill();
+
+    const x0 = Math.max(0, Math.floor(cx - r));
+    const x1 = Math.min(face.w - 1, Math.ceil(cx + r));
+    const y0 = Math.max(0, Math.floor(cy - r));
+    const y1 = Math.min(face.h - 1, Math.ceil(cy + r));
+    for (let y = y0; y <= y1; y++) {
+      const dy = y + 0.5 - cy;
+      const dy2 = dy * dy;
+      const row = y * face.w;
+      for (let x = x0; x <= x1; x++) {
+        const dx = x + 0.5 - cx;
+        if (dx * dx + dy2 <= r2) {
+          const i = row + x;
+          if (face.mask[i] === 0) {
+            face.mask[i] = 1;
+            painted++;
+          }
+        }
+      }
+    }
+  }
+
+  function stroke(face, a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dist = Math.hypot(dx, dy);
+    const step = Math.max(1, brushRadiusPx() * 0.34);
+    const n = Math.max(1, Math.ceil(dist / step));
+    for (let i = 1; i <= n; i++) {
+      stamp(face, a.x + (dx * i) / n, a.y + (dy * i) / n);
+    }
+  }
+
+  function uvToCanvas(uv, face) {
+    return { x: uv.x * face.w, y: (1 - uv.y) * face.h };
+  }
+
+  function pick(event) {
+    const rect = view.getBoundingClientRect();
+    pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+    const hits = raycaster.intersectObject(plank, false);
+    if (!hits.length || !hits[0].uv || !hits[0].face) return null;
+    return hits[0];
+  }
+
+  function placeCursor(hit) {
+    _normal.copy(hit.face.normal).transformDirection(plank.matrixWorld).normalize();
+    cursor.position.copy(hit.point).addScaledVector(_normal, 0.02);
+    cursor.quaternion.setFromUnitVectors(Y_AXIS, _normal);
+    _camRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    _camRight.addScaledVector(_normal, -_camRight.dot(_normal));
+    if (_camRight.lengthSq() > 1e-6) {
+      _camRight.normalize();
+      _localX.set(1, 0, 0).applyQuaternion(cursor.quaternion);
+      _tmp.crossVectors(_localX, _camRight);
+      cursor.rotateOnWorldAxis(_normal, Math.atan2(_normal.dot(_tmp), _localX.dot(_camRight)));
+    }
+    cursor.visible = true;
+    view.style.cursor = "none";
+  }
+
+  function paintAt(hit) {
+    const index = hit.face.materialIndex;
+    const face = faces[index];
+    if (!face) return;
+    const p = uvToCanvas(hit.uv, face);
+    if (last && last.face === index) stroke(face, last, p);
+    else stamp(face, p.x, p.y);
+    last = { x: p.x, y: p.y, face: index };
+    face.texture.needsUpdate = true;
+    updateCoverage();
+  }
+
+  function rotatePlank(event) {
+    const dx = event.clientX - rotX;
+    const dy = event.clientY - rotY;
+    rotX = event.clientX;
+    rotY = event.clientY;
+    plank.rotateOnWorldAxis(Y_AXIS, -dx * 0.008);
+    plank.rotateOnWorldAxis(X_AXIS, -dy * 0.008);
+    plank.updateMatrixWorld(true);
+  }
+
+  function endGesture() {
+    mode = null;
+    last = null;
+    view.style.cursor = "grab";
+  }
+
+  view.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 && event.button !== 2) return;
+    event.preventDefault();
+    try { view.setPointerCapture(event.pointerId); } catch (err) { /* synthetic pointers */ }
+    rotX = event.clientX;
+    rotY = event.clientY;
+    const hit = pick(event);
+    if (event.button === 2 || !hit) {
+      mode = "rotate";
+      view.style.cursor = "grabbing";
+      return;
+    }
+    mode = "paint";
+    last = null;
+    placeCursor(hit);
+    paintAt(hit);
+  });
+
+  view.addEventListener("pointermove", (event) => {
+    if (mode && event.buttons === 0) endGesture();
+    if (mode === "rotate") {
+      rotatePlank(event);
+      const hit = pick(event);
+      if (hit) placeCursor(hit);
+      else {
+        cursor.visible = false;
+        view.style.cursor = "grabbing";
+      }
+      return;
+    }
+    const hit = pick(event);
+    if (!hit) {
+      cursor.visible = false;
+      if (mode === "paint") last = null;
+      view.style.cursor = mode === "paint" ? "crosshair" : "grab";
+      return;
+    }
+    placeCursor(hit);
+    if (mode === "paint") paintAt(hit);
+  });
+
+  view.addEventListener("pointerup", endGesture);
+  view.addEventListener("pointercancel", endGesture);
+  view.addEventListener("contextmenu", (event) => event.preventDefault());
+  view.addEventListener("lostpointercapture", endGesture);
+  view.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const offset = _tmp.copy(camera.position).sub(lookTarget);
+    const dist = offset.length();
+    const next = THREE.MathUtils.clamp(dist * (1 + Math.max(-0.35, Math.min(0.35, event.deltaY / 400))), 3.5, 9.5);
+    camera.position.copy(lookTarget).add(offset.multiplyScalar(next / dist));
+  }, { passive: false });
+
+  colorInput.addEventListener("input", applyColor);
+  sizeInput.addEventListener("input", updateCursorSize);
+
+  document.getElementById("clear").addEventListener("click", () => {
+    painted = 0;
+    won = false;
+    bannerEl.hidden = true;
+    statusEl.textContent = HINT;
+    faces.forEach(redrawFace);
+    updateCoverage();
+  });
+
+  function resize() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    camera.aspect = w / Math.max(1, h);
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(w, h, false);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function frame() {
+    updateCursorSize();
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  frame();
+})();
+</script>
+</body>
+</html>
