@@ -12,23 +12,40 @@
     overflow: hidden;
     user-select: none;
   }
+  body {
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr) 256px;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "mixer hud hud"
+      "mixer stage order"
+      "mixer shelf shelf";
+    gap: 10px;
+    box-sizing: border-box;
+    height: 100%;
+    padding: 12px;
+  }
+  #stage {
+    grid-area: stage;
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    border-radius: 12px;
+    overflow: hidden;
+  }
   #view {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    left: 272px;
+    position: absolute;
+    inset: 0;
     display: block;
-    width: calc(100vw - 272px);
-    height: 100vh;
+    width: 100%;
+    height: 100%;
     touch-action: none;
-    cursor: grab;
+    cursor: default;
   }
   #hud {
-    position: fixed;
-    top: 12px;
-    left: 284px;
-    right: 12px;
+    grid-area: hud;
+    position: relative;
+    min-width: 0;
     z-index: 2;
     display: flex;
     flex-wrap: wrap;
@@ -57,7 +74,7 @@
     gap: 6px;
   }
   input[type="range"] { width: 120px; accent-color: #e0a15a; }
-  .coverage { width: 240px; }
+  .coverage { width: 168px; }
   .row {
     display: flex;
     justify-content: space-between;
@@ -78,15 +95,6 @@
     background: #c23b2e;
     border-radius: 99px;
   }
-  .goal {
-    position: absolute;
-    left: 100%;
-    top: -3px;
-    width: 2px;
-    height: 18px;
-    background: transparent;
-    transform: translateX(-1px);
-  }
   button.clear {
     background: transparent;
     color: #f6ead8;
@@ -98,8 +106,18 @@
   }
   button.clear:hover { background: rgba(246, 234, 216, 0.08); }
   button.clear:disabled { opacity: 0.4; cursor: default; }
+  #sell:not(:disabled),
+  #complete-banner:not(:disabled) {
+    background: #e0a15a;
+    border-color: #e0a15a;
+    color: #2a1c12;
+    font-weight: 600;
+  }
+  #sell:not(:disabled):hover,
+  #complete-banner:not(:disabled):hover { background: #e8b273; }
   #piece { font-size: 13px; }
   #money { font-variant-numeric: tabular-nums; min-width: 42px; }
+  #money::before { content: "Cash "; opacity: 0.7; }
   #status {
     flex-basis: 100%;
     margin: 0;
@@ -107,11 +125,12 @@
     opacity: 0.8;
   }
   #banner {
-    position: fixed;
+    position: absolute;
     z-index: 3;
     top: 46%;
-    left: calc(50% + 136px);
+    left: 50%;
     transform: translate(-50%, -50%);
+    max-width: calc(100% - 28px);
     padding: 16px 28px 18px;
     text-align: center;
     color: #f6ead8;
@@ -137,12 +156,12 @@
   }
   #banner[hidden] { display: none; }
   #mixer {
-    position: fixed;
+    grid-area: mixer;
+    position: relative;
     z-index: 2;
-    top: 12px;
-    left: 12px;
-    bottom: 12px;
-    width: 248px;
+    width: auto;
+    min-height: 0;
+    max-height: 100%;
     box-sizing: border-box;
     padding: 14px 14px 16px;
     overflow: auto;
@@ -242,9 +261,11 @@
     padding: 0;
   }
   #slots button.locked { border-style: dashed; }
-  #slots button.locked.afford {
+  #slots button.locked.afford,
+  .tool.afford,
+  .shop-btn.afford {
     color: #f6ead8;
-    border-color: rgba(224, 161, 90, 0.9);
+    border-color: rgba(224, 161, 90, 0.95);
   }
   #slots button[aria-pressed="true"] {
     outline: 2px solid #f6ead8;
@@ -281,11 +302,13 @@
   }
   .tool.locked { border-style: dashed; }
   #order {
-    position: fixed;
+    grid-area: order;
+    position: relative;
     z-index: 2;
-    top: 118px;
-    right: 12px;
-    width: 256px;
+    width: auto;
+    min-height: 0;
+    max-height: 100%;
+    overflow: auto;
     box-sizing: border-box;
     padding: 12px 14px 14px;
     background: rgba(28, 20, 16, 0.92);
@@ -390,11 +413,10 @@
   }
   #banner .actions button { margin-top: 0; }
   #shelf {
-    position: fixed;
+    grid-area: shelf;
+    position: relative;
     z-index: 2;
-    left: 284px;
-    right: 12px;
-    bottom: 12px;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -406,6 +428,7 @@
     font: 12px "Segoe UI", sans-serif;
   }
   #shelf-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  #shelf[hidden] { display: none; }
   .chip {
     width: 22px;
     height: 22px;
@@ -415,7 +438,6 @@
 </style>
 </head>
 <body>
-<canvas id="view"></canvas>
 <aside id="mixer">
   <h2>Mixing palette</h2>
   <p class="mixer-help">Click a can to pour it in. Drag the well until the color swirls, then let it even out.</p>
@@ -428,7 +450,7 @@
   <p id="well-count">0 / 8</p>
   <button id="empty-well" class="clear" type="button">Empty palette</button>
   <h3>Saved colors</h3>
-  <p class="mixer-help">Two slots are free. Sell planks to unlock more, up to ten. Click + to save, a color to load it, or right-click a saved color to replace it.</p>
+  <p class="mixer-help">Click + to keep this mix. Right-click a saved color to replace it. Priced circles unlock with a sale.</p>
   <div id="slots"></div>
   <h3>Tools</h3>
   <div id="tools"></div>
@@ -457,7 +479,6 @@
     <div class="row"><span>Coverage</span><span id="pct">0.0%</span></div>
     <div class="track-wrap">
       <div class="track"><div id="fill"></div></div>
-      <div class="goal" title="100%"></div>
     </div>
   </div>
   <span id="piece">Pine plank</span>
@@ -474,10 +495,12 @@
   <p id="order-match"></p>
   <div id="order-actions"></div>
 </aside>
-<footer id="shelf">
+<footer id="shelf" hidden>
   <span>Shelf</span>
   <div id="shelf-row">Sold pieces show up here.</div>
 </footer>
+<div id="stage">
+<canvas id="view"></canvas>
 <div id="banner" hidden>
   <h2 id="banner-title">Ready to sell</h2>
   <p id="banner-copy">The pine plank is painted.</p>
@@ -485,6 +508,7 @@
     <button id="complete-banner" class="clear" type="button" hidden>Complete</button>
     <button id="sell-banner" class="clear" type="button">Sell for $10</button>
   </div>
+</div>
 </div>
 <script src="three.min.js"></script>
 <script>
@@ -1503,11 +1527,10 @@
   }
 
   function renderShelf() {
+    const bar = document.getElementById("shelf");
     shelfEl.replaceChildren();
-    if (!shelf.length) {
-      shelfEl.textContent = "Sold pieces show up here.";
-      return;
-    }
+    bar.hidden = shelf.length === 0;
+    if (!shelf.length) return;
     shelf.forEach((item) => {
       const chip = document.createElement("div");
       chip.className = "chip";
